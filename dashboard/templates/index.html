@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+
+    <title>Always-On Security Dashboard</title>
+
+    <style>
+
+        body {
+            font-family: Arial;
+            margin: 40px;
+            background-color: #f4f4f4;
+        }
+
+        h1 {
+            color: #333;
+        }
+
+        .card {
+            background: white;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 10px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 12px;
+            border-bottom: 1px solid #ddd;
+            text-align: left;
+        }
+
+        th {
+            background-color: #222;
+            color: white;
+        }
+
+    </style>
+
+</head>
+
+<body>
+
+    <h1>Always-On Security Dashboard</h1>
+
+    <div class="card">
+
+        <h2>Cluster Overview</h2>
+
+        <p>Total Events: {{ total_events }}</p>
+
+        <p>High Risk Events: {{ high_risk }}</p>
+
+    </div>
+
+    <div class="card">
+
+        <h2>Recent Events</h2>
+
+        <table>
+
+            <tr>
+
+                <th>Timestamp</th>
+                <th>Node</th>
+                <th>CPU</th>
+                <th>Memory</th>
+                <th>Event Type</th>
+                <th>Risk Score</th>
+
+            </tr>
+
+            {% for event in events %}
+
+            <tr>
+
+                <td>{{ event.timestamp }}</td>
+                <td>{{ event.node }}</td>
+                <td>{{ event.cpu_usage }}</td>
+                <td>{{ event.memory_usage }}</td>
+                <td>{{ event.event_type }}</td>
+                <td>{{ event.risk_score }}</td>
+
+            </tr>
+
+            {% endfor %}
+
+        </table>
+
+    </div>
+
+</body>
+
+</html>

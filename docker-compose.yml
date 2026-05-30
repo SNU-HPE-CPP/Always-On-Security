@@ -1,0 +1,45 @@
+services:
+
+  controller:
+    build: ./controller
+    container_name: controller
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data:/data
+
+  dashboard:
+    build: ./dashboard
+    container_name: dashboard
+
+    ports:
+      - "5000:5000"
+
+    volumes:
+      - ./data:/data
+    depends_on:
+      - controller
+
+  node1:
+    build: ./node_agent
+    container_name: node1
+    depends_on:
+      - controller
+
+  node2:
+    build: ./node_agent
+    container_name: node2
+    depends_on:
+      - controller
+
+  node3:
+    build: ./node_agent
+    container_name: node3
+    depends_on:
+      - controller
+
+  node4:
+    build: ./node_agent
+    container_name: node4
+    depends_on:
+      - controller
