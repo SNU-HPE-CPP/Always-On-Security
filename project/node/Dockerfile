@@ -1,11 +1,11 @@
 FROM python:3.12-slim
 
-WORKDIR /project
+WORKDIR /app
 
 COPY requirements.txt .
 
-RUN pip install -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-COPY node/ .
+COPY . .
 
-CMD ["python", "-u", "node_agent.py"]
+CMD ["python", "-u", "agent.py"]

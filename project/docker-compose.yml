@@ -1,29 +1,36 @@
 services:
 
   controller:
-    build:
-      context: .
-      dockerfile: controller/Dockerfile
+    build: ./controller
     container_name: controller
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data:/data
     networks:
       - hpc_net
 
-
   job_provider:
-    build:
-      context: .
-      dockerfile: job_provider/Dockerfile
+    build: ./job_provider
     container_name: job_provider
     depends_on:
       - controller
     networks:
       - hpc_net
 
+  dashboard:
+    build: ./dashboard
+    container_name: dashboard
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./data:/data
+    depends_on:
+      - controller
+    networks:
+      - hpc_net
 
   node1:
-    build:
-      context: .
-      dockerfile: node/Dockerfile
+    build: ./node
     container_name: node1
     environment:
       - NODE_NAME=node1
@@ -33,9 +40,7 @@ services:
       - hpc_net
 
   node2:
-    build:
-      context: .
-      dockerfile: node/Dockerfile
+    build: ./node
     container_name: node2
     environment:
       - NODE_NAME=node2
@@ -45,9 +50,7 @@ services:
       - hpc_net
 
   node3:
-    build:
-      context: .
-      dockerfile: node/Dockerfile
+    build: ./node
     container_name: node3
     environment:
       - NODE_NAME=node3
@@ -57,9 +60,7 @@ services:
       - hpc_net
 
   node4:
-    build:
-      context: .
-      dockerfile: node/Dockerfile
+    build: ./node
     container_name: node4
     environment:
       - NODE_NAME=node4
@@ -68,9 +69,6 @@ services:
     networks:
       - hpc_net
 
-
-
-
 networks:
   hpc_net:
-    external: true
+    driver: bridge

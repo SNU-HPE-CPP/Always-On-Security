@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Auto-refresh every 10 seconds -->
+    <meta http-equiv="refresh" content="10">
+
+    <title>Always-On Security | HPC Dashboard</title>
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0f0f14;
+            color: #e0e0e0;
+            min-height: 100vh;
+            padding: 24px;
+        }
+
+        /* --- HEADER --- */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 28px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid #2a2a3a;
+        }
+
+        .header h1 {
+            font-size: 22px;
+            font-weight: 600;
+            color: #ffffff;
+        }
+
+        .header h1 span {
+            color: #4ade80;
+        }
+
+        .header .refresh-badge {
+            font-size: 12px;
+            color: #888;
+            background: #1a1a28;
+            padding: 4px 10px;
+            border-radius: 4px;
+        }
+
+        /* --- STAT CARDS --- */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 14px;
+            margin-bottom: 28px;
+        }
+
+        .stat-card {
+            background: #16161f;
+            border: 1px solid #2a2a3a;
+            border-radius: 8px;
+            padding: 18px;
+        }
+
+        .stat-card .label {
+            font-size: 12px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 6px;
+        }
+
+        .stat-card .value {
+            font-size: 28px;
+            font-weight: 700;
+        }
+
+        .stat-card.green .value { color: #4ade80; }
+        .stat-card.yellow .value { color: #facc15; }
+        .stat-card.red .value { color: #f87171; }
+        .stat-card.blue .value { color: #60a5fa; }
+
+        /* --- SECTIONS --- */
+        .section {
+            margin-bottom: 28px;
+        }
+
+        .section h2 {
+            font-size: 16px;
+            font-weight: 600;
+            color: #ccc;
+            margin-bottom: 12px;
+            padding-bottom: 6px;
+            border-bottom: 1px solid #222233;
+        }
+
+        /* --- NODE STATUS --- */
+        .node-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+        }
+
+        .node-card {
+            background: #16161f;
+            border: 1px solid #2a2a3a;
+            border-radius: 6px;
+            padding: 14px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .node-card .node-name {
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .node-card .node-info {
+            font-size: 11px;
+            color: #888;
+            margin-top: 2px;
+        }
+
+        .status-badge {
+            font-size: 11px;
+            font-weight: 600;
+            padding: 3px 10px;
+            border-radius: 4px;
+            text-transform: uppercase;
+        }
+
+        .status-idle {
+            background: #16331e;
+            color: #4ade80;
+        }
+
+        .status-busy {
+            background: #332c16;
+            color: #facc15;
+        }
+
+        .status-quarantined {
+            background: #331616;
+            color: #f87171;
+        }
+
+        .status-unresponsive {
+            background: #2a1a33;
+            color: #c084fc;
+        }
+
+        /* --- TABLES --- */
+        .table-wrap {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+
+        th {
+            text-align: left;
+            padding: 10px 12px;
+            background: #1a1a28;
+            color: #aaa;
+            font-weight: 600;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid #2a2a3a;
+        }
+
+        td {
+            padding: 9px 12px;
+            border-bottom: 1px solid #1e1e2e;
+            color: #ccc;
+        }
+
+        tr:hover td {
+            background: #1a1a28;
+        }
+
+        /* Event type badges */
+        .badge {
+            font-size: 11px;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 3px;
+        }
+
+        .badge-normal {
+            background: #16331e;
+            color: #4ade80;
+        }
+
+        .badge-suspicious {
+            background: #332c16;
+            color: #facc15;
+        }
+
+        .badge-unresponsive {
+            background: #2a1a33;
+            color: #c084fc;
+        }
+
+        /* Risk colors */
+        .risk-low { color: #4ade80; }
+        .risk-med { color: #facc15; }
+        .risk-high { color: #f87171; font-weight: 700; }
+
+        /* Job status */
+        .job-running {
+            background: #332c16;
+            color: #facc15;
+        }
+
+        .job-completed {
+            background: #16331e;
+            color: #4ade80;
+        }
+
+        /* --- FOOTER --- */
+        .footer {
+            text-align: center;
+            font-size: 11px;
+            color: #555;
+            margin-top: 32px;
+            padding-top: 16px;
+            border-top: 1px solid #1e1e2e;
+        }
+
+        /* --- NO DATA --- */
+        .no-data {
+            color: #555;
+            font-size: 13px;
+            padding: 16px;
+            text-align: center;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- HEADER -->
+    <div class="header">
+        <h1><span>●</span> Always-On Security</h1>
+        <div class="refresh-badge">Auto-refresh: 10s</div>
+    </div>
+
+    <!-- STATS -->
+    <div class="stats-grid">
+        <div class="stat-card blue">
+            <div class="label">Total Events</div>
+            <div class="value">{{ total_events }}</div>
+        </div>
+        <div class="stat-card yellow">
+            <div class="label">Suspicious</div>
+            <div class="value">{{ suspicious_count }}</div>
+        </div>
+        <div class="stat-card red">
+            <div class="label">High Risk</div>
+            <div class="value">{{ high_risk }}</div>
+        </div>
+        <div class="stat-card green">
+            <div class="label">Unresponsive</div>
+            <div class="value">{{ unresponsive_count }}</div>
+        </div>
+    </div>
+
+    <!-- NODE STATUS -->
+    <div class="section">
+        <h2>Node Status</h2>
+
+        {% if nodes %}
+        <div class="node-grid">
+            {% for node in nodes %}
+            <div class="node-card">
+                <div>
+                    <div class="node-name">{{ node.node }}</div>
+                    <div class="node-info">Risk: {{ node.cumulative_risk }} | Last seen: {{ node.last_heartbeat }}</div>
+                </div>
+                <span class="status-badge
+                    {% if node.status == 'idle' %}status-idle
+                    {% elif node.status == 'busy' %}status-busy
+                    {% elif node.status == 'quarantined' %}status-quarantined
+                    {% else %}status-unresponsive{% endif %}">
+                    {{ node.status }}
+                </span>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="no-data">No node data yet — waiting for telemetry...</div>
+        {% endif %}
+    </div>
+
+    <!-- RECENT SECURITY EVENTS -->
+    <div class="section">
+        <h2>Recent Security Events</h2>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Timestamp</th>
+                        <th>Node</th>
+                        <th>CPU %</th>
+                        <th>Mem %</th>
+                        <th>Procs</th>
+                        <th>Type</th>
+                        <th>Risk</th>
+                        <th>Reasons</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for event in events %}
+                    <tr>
+                        <td>{{ event.timestamp }}</td>
+                        <td>{{ event.node }}</td>
+                        <td>{{ event.cpu_usage }}</td>
+                        <td>{{ event.memory_usage }}</td>
+                        <td>{{ event.process_count }}</td>
+                        <td>
+                            <span class="badge
+                                {% if event.event_type == 'NORMAL' %}badge-normal
+                                {% elif event.event_type == 'SUSPICIOUS_ACTIVITY' %}badge-suspicious
+                                {% else %}badge-unresponsive{% endif %}">
+                                {{ event.event_type }}
+                            </span>
+                        </td>
+                        <td>
+                            <span class="
+                                {% if event.risk_score >= 100 %}risk-high
+                                {% elif event.risk_score >= 50 %}risk-med
+                                {% else %}risk-low{% endif %}">
+                                {{ event.risk_score }}
+                            </span>
+                        </td>
+                        <td>{{ event.reasons }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- JOB HISTORY -->
+    <div class="section">
+        <h2>Job History</h2>
+        <div class="table-wrap">
+            {% if jobs %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>Job ID</th>
+                        <th>Type</th>
+                        <th>Duration</th>
+                        <th>Node</th>
+                        <th>Status</th>
+                        <th>Dispatched</th>
+                        <th>Completed</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for job in jobs %}
+                    <tr>
+                        <td>{{ job.job_id[:8] }}...</td>
+                        <td>{{ job.job_type }}</td>
+                        <td>{{ job.duration }}s</td>
+                        <td>{{ job.assigned_node }}</td>
+                        <td>
+                            <span class="badge
+                                {% if job.status == 'completed' %}job-completed
+                                {% else %}job-running{% endif %}">
+                                {{ job.status }}
+                            </span>
+                        </td>
+                        <td>{{ job.dispatched_at }}</td>
+                        <td>{{ job.completed_at or '—' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="no-data">No jobs dispatched yet...</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="footer">
+        Always-On Security Platform — HPC Cluster Monitor — MVP
+    </div>
+
+</body>
+
+</html>

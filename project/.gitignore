@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+
+# Database
+data/events.db
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store

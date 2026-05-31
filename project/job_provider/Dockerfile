@@ -1,9 +1,9 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
-WORKDIR /project
+WORKDIR /app
 
-RUN pip install pyzmq
+RUN pip install --no-cache-dir pyzmq
 
-COPY job_provider/ .
+COPY . .
 
 CMD ["python", "-u", "provider.py"]
