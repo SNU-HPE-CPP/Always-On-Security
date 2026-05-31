@@ -2,22 +2,28 @@ services:
   controller:
     build: ./controller
     container_name: controller
+    volumes:
+      - ./data:/data
 
+  risk-engine:
+    build: ./risk_engine
+    container_name: risk-engine
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./data:/data
+      - ./risk_engine/config:/opt/security/config:ro
+    depends_on:
+      - controller
 
   dashboard:
     build: ./dashboard
     container_name: dashboard
-
     ports:
-      - "5000:5000"
-
+      - "8000:5000"
     volumes:
       - ./data:/data
     depends_on:
-      - controller
+      - risk-engine
 
   node1:
     build: ./node_agent

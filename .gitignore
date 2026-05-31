@@ -15,6 +15,9 @@ venv/
 
 # Database
 data/events.db
+data/events.db-shm
+data/events.db-wal
+data/controller.offset
 *.db
 
 # Docker
@@ -24,6 +27,7 @@ docker-compose.override.yml
 # IDE files
 .vscode/
 .idea/
+.code-review-graph/
 
 # Pytest
 .pytest_cache/
@@ -34,3 +38,6 @@ docker-compose.override.yml
 
 # Others
 docker-cheatsheet.md
+
+# Local data folder
+data/

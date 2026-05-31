@@ -1,0 +1,7 @@
+# Asset criticality weights (0–30).
+# Higher = more sensitive node = higher risk score per event.
+node1: 10
+node2: 10
+node3: 20
+node4: 30
+default: 15

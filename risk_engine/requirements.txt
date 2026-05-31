@@ -1,0 +1,4 @@
+pyzmq
+docker
+pyyaml
+watchdog

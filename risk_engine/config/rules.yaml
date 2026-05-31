@@ -1,0 +1,23 @@
+- id: HIGH_CPU
+  match:
+    reasons_contains: "CPU"
+  severity: 10
+  blast_radius: 5
+
+- id: HIGH_MEMORY
+  match:
+    reasons_contains: "memory"
+  severity: 10
+  blast_radius: 5
+
+- id: PROCESS_COUNT
+  match:
+    reasons_contains: "Too many"
+  severity: 15
+  blast_radius: 10
+
+- id: SUSPICIOUS_PROCESS
+  match:
+    reasons_contains: "Suspicious process"
+  severity: 35
+  blast_radius: 20

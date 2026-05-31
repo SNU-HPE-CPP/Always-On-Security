@@ -1,99 +1,89 @@
 <!DOCTYPE html>
 <html>
-
 <head>
-
     <title>Always-On Security Dashboard</title>
-
     <style>
-
-        body {
-            font-family: Arial;
-            margin: 40px;
-            background-color: #f4f4f4;
-        }
-
-        h1 {
-            color: #333;
-        }
-
-        .card {
-            background: white;
-            padding: 20px;
-            margin-bottom: 20px;
-            border-radius: 10px;
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-
-        th, td {
-            padding: 12px;
-            border-bottom: 1px solid #ddd;
-            text-align: left;
-        }
-
-        th {
-            background-color: #222;
-            color: white;
-        }
-
+        body { font-family: Arial; margin: 40px; background-color: #f4f4f4; }
+        h1 { color: #333; }
+        .card { background: white; padding: 20px; margin-bottom: 20px; border-radius: 10px; }
+        .stats { display: flex; gap: 16px; flex-wrap: wrap; }
+        .stat { background: white; padding: 16px 24px; border-radius: 8px; text-align: center; min-width: 120px; }
+        .stat .label { font-size: 12px; color: #666; text-transform: uppercase; }
+        .stat .value { font-size: 28px; font-weight: bold; margin-top: 4px; }
+        .quarantine { color: #c0392b; }
+        .human      { color: #e67e22; }
+        .auto       { color: #2980b9; }
+        .correlated { color: #8e44ad; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 10px 12px; border-bottom: 1px solid #ddd; text-align: left; font-size: 13px; }
+        th { background-color: #222; color: white; }
+        tr:hover td { background: #f9f9f9; }
+        .bucket-quarantine { color: #c0392b; font-weight: bold; }
+        .bucket-human      { color: #e67e22; font-weight: bold; }
+        .bucket-auto       { color: #2980b9; font-weight: bold; }
+        .bucket-silent     { color: #7f8c8d; }
+        .corr-badge { background: #8e44ad; color: white; border-radius: 4px; padding: 1px 5px; font-size: 11px; }
     </style>
-
 </head>
-
 <body>
 
-    <h1>Always-On Security Dashboard</h1>
+<h1>Always-On Security Dashboard</h1>
 
-    <div class="card">
-
-        <h2>Cluster Overview</h2>
-
-        <p>Total Events: {{ total_events }}</p>
-
-        <p>High Risk Events: {{ high_risk }}</p>
-
+<div class="stats">
+    <div class="stat">
+        <div class="label">Total Events</div>
+        <div class="value">{{ total_events }}</div>
     </div>
-
-    <div class="card">
-
-        <h2>Recent Events</h2>
-
-        <table>
-
-            <tr>
-
-                <th>Timestamp</th>
-                <th>Node</th>
-                <th>CPU</th>
-                <th>Memory</th>
-                <th>Event Type</th>
-                <th>Risk Score</th>
-
-            </tr>
-
-            {% for event in events %}
-
-            <tr>
-
-                <td>{{ event.timestamp }}</td>
-                <td>{{ event.node }}</td>
-                <td>{{ event.cpu_usage }}</td>
-                <td>{{ event.memory_usage }}</td>
-                <td>{{ event.event_type }}</td>
-                <td>{{ event.risk_score }}</td>
-
-            </tr>
-
-            {% endfor %}
-
-        </table>
-
+    <div class="stat">
+        <div class="label">Quarantined</div>
+        <div class="value quarantine">{{ high_risk }}</div>
     </div>
+    <div class="stat">
+        <div class="label">Human Review</div>
+        <div class="value human">{{ human_count }}</div>
+    </div>
+    <div class="stat">
+        <div class="label">Auto Remediation</div>
+        <div class="value auto">{{ auto_count }}</div>
+    </div>
+    <div class="stat">
+        <div class="label">Correlated</div>
+        <div class="value correlated">{{ correlated_count }}</div>
+    </div>
+</div>
+
+<div class="card" style="margin-top:24px;">
+    <h2>Recent Events (last 20)</h2>
+    <table>
+        <tr>
+            <th>Timestamp</th>
+            <th>Node</th>
+            <th>CPU %</th>
+            <th>Mem %</th>
+            <th>Event Type</th>
+            <th>Bucket</th>
+            <th>Event Score</th>
+            <th>Cumulative Score</th>
+            <th>Rules Matched</th>
+        </tr>
+        {% for event in events %}
+        <tr>
+            <td>{{ event.timestamp }}</td>
+            <td>{{ event.node }}</td>
+            <td>{{ "%.1f"|format(event.cpu_usage or 0) }}</td>
+            <td>{{ "%.1f"|format(event.memory_usage or 0) }}</td>
+            <td>{{ event.event_type }}</td>
+            <td class="bucket-{{ event.bucket or 'silent' }}">
+                {{ (event.bucket or '—').upper() }}
+                {% if event.correlated %}<span class="corr-badge">CORR</span>{% endif %}
+            </td>
+            <td>{{ "%.4f"|format(event.weighted_score or 0) }}</td>
+            <td>{{ event.risk_score }}</td>
+            <td style="font-size:11px; color:#555;">{{ event.matched_rules or '—' }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+</div>
 
 </body>
-
 </html>

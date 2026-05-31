@@ -1,0 +1,10 @@
+buckets:
+  silent: [0, 30]
+  auto: [31, 70]
+  human: [71, 100]
+  # score > 100 → quarantine (fallthrough)
+
+correlation:
+  window_seconds: 600
+  min_nodes: 3
+  multiplier_when_correlated: 1.5
