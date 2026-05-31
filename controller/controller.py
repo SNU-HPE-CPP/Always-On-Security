@@ -4,6 +4,8 @@ import json
 import sqlite3
 from datetime import datetime
 
+from wazuh_controller import WazuhController
+
 # -----------------------------
 # DATABASE SETUP
 # -----------------------------
@@ -42,7 +44,10 @@ conn.commit()
 # -----------------------------
 
 node_risk_scores = {}
+
 docker_client = docker.from_env()
+
+wazuh = WazuhController()
 
 # -----------------------------
 # ZEROMQ SETUP
@@ -69,6 +74,7 @@ while True:
     reasons = message["reasons"]
 
     # initialize node score
+
     if node not in node_risk_scores:
         node_risk_scores[node] = 0
 
@@ -93,9 +99,18 @@ while True:
             risk_increment += 25
 
     # update cumulative risk
+
     node_risk_scores[node] += risk_increment
 
     current_risk = node_risk_scores[node]
+
+    # -----------------------------
+    # WAZUH ALERTING
+    # -----------------------------
+
+    if current_risk >= 50:
+
+        wazuh.send_alert(node=node, risk_score=current_risk, reasons=reasons)
 
     # -----------------------------
     # DISPLAY EVENT
@@ -109,7 +124,10 @@ while True:
 
     print(f"\nCURRENT NODE RISK SCORE: {current_risk}")
 
-    # severity classification and remidiation
+    # -----------------------------
+    # SEVERITY & REMEDIATION
+    # -----------------------------
+
     if current_risk >= 100:
 
         print("SEVERITY: HIGH RISK")
@@ -142,7 +160,8 @@ while True:
 
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    cursor.execute("""
+    cursor.execute(
+        """
     INSERT INTO events (
 
         timestamp,
@@ -155,18 +174,18 @@ while True:
         risk_score
 
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-
-        timestamp,
-        message["node"],
-        message["cpu_usage"],
-        message["memory_usage"],
-        message["process_count"],
-        message["event_type"],
-        json.dumps(message["reasons"]),
-        current_risk
-
-    ))
+    """,
+        (
+            timestamp,
+            message["node"],
+            message["cpu_usage"],
+            message["memory_usage"],
+            message["process_count"],
+            message["event_type"],
+            json.dumps(message["reasons"]),
+            current_risk,
+        ),
+    )
 
     conn.commit()
 

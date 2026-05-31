@@ -1,5 +1,4 @@
 services:
-
   controller:
     build: ./controller
     container_name: controller
@@ -43,3 +42,7 @@ services:
     container_name: node4
     depends_on:
       - controller
+
+  wazuh:
+    build: ./wazuh
+    container_name: wazuh
