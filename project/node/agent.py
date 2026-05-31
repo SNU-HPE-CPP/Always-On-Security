@@ -120,7 +120,9 @@ def telemetry_monitor():
     Collects system metrics via psutil every 5 seconds,
     runs rule-based anomaly detection, and sends
     security events to the controller on port 5558.
+    Includes a threat simulation capability to trigger demo alerts and quarantine.
     """
+    import random
 
     # Send security events to controller
     sender = context.socket(zmq.PUSH)
@@ -128,12 +130,38 @@ def telemetry_monitor():
 
     print(f"[{NODE_NAME}] Telemetry monitor started -> :5558")
 
+    under_attack = False
+    attack_stage = 0
+
     while True:
 
         # ---- Collect telemetry ----
         cpu = psutil.cpu_percent(interval=1)
         memory = psutil.virtual_memory().percent
         process_count = len(psutil.pids())
+
+        # ---- THREAT SIMULATOR FOR DEMO ----
+        # 4% chance per loop (approx 1 attack start per 2 minutes per node)
+        # We also ensure node1 has a slightly higher chance to speed up the first quarantine demo
+        trigger_chance = 0.08 if NODE_NAME == "node1" else 0.03
+        if not under_attack:
+            if random.random() < trigger_chance:
+                under_attack = True
+                attack_stage = 1
+                print(f"[{NODE_NAME}] [SIMULATOR] Threat simulation INITIATED! Starting escalation...")
+        else:
+            attack_stage = min(4, attack_stage + 1)
+            print(f"[{NODE_NAME}] [SIMULATOR] Threat level escalating (Stage {attack_stage})")
+
+        # Apply simulation overrides
+        if under_attack:
+            if attack_stage >= 1:
+                cpu = 92.5      # Triggers Rule 1 (>80% CPU)
+            if attack_stage >= 2:
+                memory = 88.0   # Triggers Rule 2 (>85% Memory)
+            if attack_stage >= 3:
+                process_count = 310  # Triggers Rule 3 (>300 processes)
+            # Stage 4 triggers Rule 4 (suspicious process names below)
 
         # ---- Default state ----
         event_type = "NORMAL"
@@ -167,14 +195,22 @@ def telemetry_monitor():
             reasons.append(f"Too many running processes: {process_count}")
 
         # ---- RULE 4: Suspicious process names ----
+        detected_suspicious = []
         for proc in psutil.process_iter(['name']):
             try:
                 pname = proc.info['name']
                 if pname and pname.lower() in SUSPICIOUS_PROCESSES:
-                    event_type = "SUSPICIOUS_ACTIVITY"
-                    reasons.append(f"Suspicious process detected: {pname}")
+                    detected_suspicious.append(pname)
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
+
+        # Simulate suspicious process detection for demo
+        if under_attack and attack_stage >= 4:
+            detected_suspicious.append("hydra")
+
+        for pname in detected_suspicious:
+            event_type = "SUSPICIOUS_ACTIVITY"
+            reasons.append(f"Suspicious process detected: {pname}")
 
         # ---- Build event ----
         event = {
