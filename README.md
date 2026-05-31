@@ -1,6 +1,6 @@
 # Always-On Security System
 
-Distributed security monitoring and automated remediation system for HPC environments. Built with Docker, Python, ZeroMQ, SQLite, and Flask.
+Distributed security monitoring and automated remediation system for Monolithic HPC environments. Built with Docker, Python, ZeroMQ, SQLite, and Flask.
 
 ---
 
