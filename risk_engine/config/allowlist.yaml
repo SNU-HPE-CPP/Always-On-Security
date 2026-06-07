@@ -1,0 +1,31 @@
+# Approved node identifiers.
+# Any node whose name is NOT in this list will trigger a ROGUE_NODE alert.
+# Add new nodes here before connecting them to the cluster.
+allowed_nodes:
+  - node1
+  - node2
+  - node3
+  - node4
+
+# Message flooding threshold.
+# If a node sends more than max_msgs_per_60s messages in any 60-second window,
+# a FLOOD_ATTACK alert is generated.
+flood_threshold:
+  max_msgs_per_60s: 20
+
+# Replay attack protection window.
+# max_age_seconds: messages older than this are rejected.
+# window_seq_track: how many (msg_id, seq) pairs to keep per node.
+replay_protection:
+  max_age_seconds: 30
+  window_seq_track: 1000
+
+# Per-node heartbeat timeouts (seconds).
+# If a node hasn't reported within this window, a SILENT_NODE alert is raised.
+# Use 'default' as the fallback for any node not listed explicitly.
+heartbeat_timeout_seconds:
+  default: 30
+  node1: 30
+  node2: 30
+  node3: 30
+  node4: 30

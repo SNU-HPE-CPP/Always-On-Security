@@ -1,10 +1,11 @@
 """
-Always-On Security — Node Agent
-Dual-threaded agent:
-  1. Telemetry Monitor — collects system metrics, detects anomalies, sends security events
-  2. Job Worker — receives job assignments, marks node as busy/idle for context-aware detection
+Always-On Security — Node Agent  (Enhanced)
+Dual-threaded agent + security collector:
+  1. Telemetry Monitor  — hardware metrics, rule-based anomaly detection
+  2. Job Worker         — receives job assignments, context-aware detection
+  3. Security Collector — config tampering, lateral movement, process policy
 
-Includes a built-in threat simulator for automated demo & testing.
+All ZMQ messages are signed with HMAC-SHA256 via SecureMessenger.
 """
 
 import zmq
@@ -14,6 +15,9 @@ import socket
 import threading
 import random
 import psutil
+
+from secure_messenger import SecureMessenger
+from security_collector import SecurityCollector
 
 # ----------------------------------
 # IDENTITY
@@ -28,26 +32,30 @@ NODE_NAME = os.getenv("NODE_NAME", socket.gethostname())
 context = zmq.Context()
 
 # ----------------------------------
-# SUSPICIOUS PROCESS LIST
+# SECURE MESSENGER (shared)
+# ----------------------------------
+# One instance — thread-safe seq counter
+
+messenger = SecureMessenger(NODE_NAME)
+
+# ----------------------------------
+# SECURITY COLLECTOR (shared)
+# ----------------------------------
+
+security_collector = SecurityCollector()
+
+# ----------------------------------
+# SUSPICIOUS PROCESS LIST (legacy denylist — kept for backward compat)
+# Process policy is now driven by security_collector / process_policy.yaml
 # ----------------------------------
 
 SUSPICIOUS_PROCESSES = [
-    "nmap",
-    "hydra",
-    "nc",
-    "netcat",
-    "stress",
-    "stress-ng",
-    "hashcat",
-    "john",
-    "sqlmap",
-    "metasploit",
+    "nmap", "hydra", "nc", "netcat", "stress", "stress-ng",
+    "hashcat", "john", "sqlmap", "metasploit",
 ]
 
 # ----------------------------------
 # CURRENT JOB TRACKING
-# (shared between threads for
-#  job-aware risk scoring context)
 # ----------------------------------
 
 current_job = {
@@ -64,45 +72,38 @@ job_lock = threading.Lock()
 def job_worker():
     """
     Receives jobs from the risk-engine/scheduler on port 5556,
-    simulates execution, and marks the node as busy/idle.
-    In the current architecture this is a stub — nodes default to idle.
+    simulates execution, marks the node as busy/idle.
     """
-
     receiver = context.socket(zmq.PULL)
     receiver.bind("tcp://*:5556")
-
     print(f"[{NODE_NAME}] Job worker ready on :5556")
 
     while True:
         try:
             job = receiver.recv_json()
-
-            job_id = job.get("job_id", "unknown")
+            job_id   = job.get("job_id", "unknown")
             job_type = job.get("job_type", "unknown")
             duration = job.get("duration", 5)
 
-            print(f"[{NODE_NAME}] Executing job {job_id} "
-                  f"(type={job_type}, duration={duration}s)")
+            print(f"[{NODE_NAME}] Executing job {job_id} (type={job_type}, duration={duration}s)")
 
-            # Mark job as active (for telemetry thread)
             with job_lock:
-                current_job["active"] = True
+                current_job["active"]   = True
                 current_job["job_type"] = job_type
-                current_job["job_id"] = job_id
+                current_job["job_id"]   = job_id
 
-            # Simulate execution
             time.sleep(duration)
 
-            # Mark job complete
             with job_lock:
-                current_job["active"] = False
+                current_job["active"]   = False
                 current_job["job_type"] = None
-                current_job["job_id"] = None
+                current_job["job_id"]   = None
 
             print(f"[{NODE_NAME}] Completed job {job_id}")
 
         except Exception as e:
             print(f"[{NODE_NAME}] Job worker error: {e}")
+
 
 # ==================================
 # THREAD 2: TELEMETRY & ANOMALY
@@ -110,30 +111,23 @@ def job_worker():
 
 def telemetry_monitor():
     """
-    Collects system metrics via psutil every 5 seconds,
-    runs rule-based anomaly detection, and sends
-    security events to the controller on port 5555.
-    Includes a threat simulation capability to trigger demo alerts.
+    Collects system metrics every 5 seconds, runs rule-based anomaly detection,
+    merges security collector snapshot, and sends signed telemetry to controller.
     """
-
-    # Send security events to controller
     sender = context.socket(zmq.PUSH)
     sender.connect("tcp://controller:5555")
-
     print(f"[{NODE_NAME}] Telemetry monitor started -> controller:5555")
 
-    under_attack = False
-    attack_stage = 0
+    under_attack  = False
+    attack_stage  = 0
 
     while True:
+        # ---- Collect hardware telemetry ----
+        cpu            = psutil.cpu_percent(interval=1)
+        memory         = psutil.virtual_memory().percent
+        process_count  = len(psutil.pids())
 
-        # ---- Collect telemetry ----
-        cpu = psutil.cpu_percent(interval=1)
-        memory = psutil.virtual_memory().percent
-        process_count = len(psutil.pids())
-
-        # ---- THREAT SIMULATOR FOR DEMO ----
-        # node1 has higher chance (8%) to speed up the first quarantine demo
+        # ---- Threat Simulator (demo) ----
         trigger_chance = 0.08 if NODE_NAME == "node1" else 0.03
         if not under_attack:
             if random.random() < trigger_chance:
@@ -144,58 +138,46 @@ def telemetry_monitor():
             attack_stage = min(4, attack_stage + 1)
             print(f"[{NODE_NAME}] [SIMULATOR] Escalating (Stage {attack_stage})")
 
-        # Apply simulation overrides
         if under_attack:
-            if attack_stage >= 1:
-                cpu = 92.5       # Triggers HIGH_CPU rule
-            if attack_stage >= 2:
-                memory = 88.0    # Triggers HIGH_MEMORY rule
-            if attack_stage >= 3:
-                process_count = 310  # Triggers PROCESS_COUNT rule
-            # Stage 4 triggers SUSPICIOUS_PROCESS below
+            if attack_stage >= 1: cpu           = 92.5
+            if attack_stage >= 2: memory        = 88.0
+            if attack_stage >= 3: process_count = 310
 
-        # ---- Default state ----
+        # ---- Anomaly detection state ----
         event_type = "NORMAL"
-        reasons = []
+        reasons    = []
 
-        # ---- Get current job context ----
         with job_lock:
-            is_busy = current_job["active"]
+            is_busy         = current_job["active"]
             active_job_type = current_job["job_type"]
 
-        # ---- RULE 1: High CPU ----
+        # Rule 1: High CPU
         if cpu > 80:
-            # Job-aware: if running a CPU job, high CPU is expected
-            if is_busy and active_job_type == "cpu":
-                pass  # Expected behavior, don't flag
-            else:
+            if not (is_busy and active_job_type == "cpu"):
                 event_type = "SUSPICIOUS_ACTIVITY"
                 reasons.append(f"High CPU usage detected: {cpu}%")
 
-        # ---- RULE 2: High Memory ----
+        # Rule 2: High Memory
         if memory > 85:
-            if is_busy and active_job_type == "memory_access":
-                pass  # Expected for memory-intensive jobs
-            else:
+            if not (is_busy and active_job_type == "memory_access"):
                 event_type = "SUSPICIOUS_ACTIVITY"
                 reasons.append(f"High memory usage detected: {memory}%")
 
-        # ---- RULE 3: Too many processes ----
+        # Rule 3: Too many processes
         if process_count > 300:
             event_type = "SUSPICIOUS_ACTIVITY"
             reasons.append(f"Too many running processes: {process_count}")
 
-        # ---- RULE 4: Suspicious process names ----
+        # Rule 4: Suspicious processes (legacy — still checked for backward compat)
         detected_suspicious = []
-        for proc in psutil.process_iter(['name']):
+        for proc in psutil.process_iter(["name"]):
             try:
-                pname = proc.info['name']
+                pname = proc.info["name"]
                 if pname and pname.lower() in SUSPICIOUS_PROCESSES:
                     detected_suspicious.append(pname)
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
 
-        # Simulate suspicious process detection at stage 4
         if under_attack and attack_stage >= 4:
             detected_suspicious.append("hydra")
 
@@ -203,40 +185,79 @@ def telemetry_monitor():
             event_type = "SUSPICIOUS_ACTIVITY"
             reasons.append(f"Suspicious process detected: {pname}")
 
-        # ---- Build event ----
-        event = {
-            "node": NODE_NAME,
-            "cpu_usage": cpu,
-            "memory_usage": memory,
-            "process_count": process_count,
-            "event_type": event_type,
-            "reasons": reasons,
-            "is_busy": is_busy,
-            "active_job_type": active_job_type,
+        # ---- Merge security collector snapshot ----
+        sec = security_collector.get_snapshot()
+
+        if sec.get("config_tamper"):
+            event_type = "SUSPICIOUS_ACTIVITY"
+            for tf in sec.get("tampered_files", []):
+                reasons.append(f"Config tamper: {tf['file']}")
+
+        if sec.get("ssh_connections", 0) > 0:
+            event_type = "SUSPICIOUS_ACTIVITY"
+            reasons.append(
+                f"Lateral movement: {sec['ssh_connections']} SSH connections "
+                f"to peers {sec.get('lateral_peers', [])}"
+            )
+
+        if sec.get("unauthorized_procs"):
+            event_type = "SUSPICIOUS_ACTIVITY"
+            for p in sec["unauthorized_procs"]:
+                reasons.append(f"Unauthorized process: {p['name']} (pid={p['pid']})")
+
+        # ---- Build raw event payload ----
+        raw_payload = {
+            "node":               NODE_NAME,
+            "cpu_usage":          cpu,
+            "memory_usage":       memory,
+            "process_count":      process_count,
+            "event_type":         event_type,
+            "reasons":            reasons,
+            "is_busy":            is_busy,
+            "active_job_type":    active_job_type,
+            # Security collector fields
+            "config_tamper":      sec.get("config_tamper", False),
+            "tampered_files":     sec.get("tampered_files", []),
+            "ssh_connections":    sec.get("ssh_connections", 0),
+            "lateral_peers":      sec.get("lateral_peers", []),
+            "peer_contact_count": sec.get("peer_contact_count", 0),
+            "unauthorized_procs": sec.get("unauthorized_procs", []),
         }
 
-        # Send to controller
-        sender.send_json(event)
+        # ---- Sign and send ----
+        signed_msg = messenger.sign(raw_payload)
+        sender.send_json(signed_msg)
 
         if event_type != "NORMAL":
             print(f"[{NODE_NAME}] ALERT: {reasons}")
 
-        # Wait before next cycle
         time.sleep(5)
+
+
+# ==================================
+# THREAD 3: SECURITY COLLECTOR
+# ==================================
+
+def security_collector_thread():
+    """Runs the SecurityCollector's main loop in a background thread."""
+    security_collector.run()
+
 
 # ==================================
 # MAIN
 # ==================================
 
-print(f"[{NODE_NAME}] Starting agent...")
+print(f"[{NODE_NAME}] Starting enhanced agent (hardware + security telemetry)...")
 
-t1 = threading.Thread(target=job_worker, daemon=True)
-t2 = threading.Thread(target=telemetry_monitor, daemon=True)
+t1 = threading.Thread(target=job_worker,              daemon=True, name="JobWorker")
+t2 = threading.Thread(target=telemetry_monitor,       daemon=True, name="TelemetryMonitor")
+t3 = threading.Thread(target=security_collector_thread, daemon=True, name="SecurityCollector")
 
 t1.start()
 t2.start()
+t3.start()
 
-print(f"[{NODE_NAME}] Agent running (job worker + telemetry)")
+print(f"[{NODE_NAME}] Agent running (job worker + telemetry + security collector)")
 
 while True:
     time.sleep(1)

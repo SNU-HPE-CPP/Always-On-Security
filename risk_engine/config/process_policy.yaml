@@ -1,0 +1,30 @@
+# Process enforcement policy.
+# mode: "denylist" — only the listed processes are flagged as unauthorized.
+# mode: "allowlist" — any process NOT in the allowlist is flagged.
+#
+# NOTE: allowlist mode is very strict and may generate false positives
+# in containers where many system processes run. Start with denylist mode.
+
+mode: denylist
+
+# Processes that should NEVER be present on cluster nodes.
+# These are offensive security tools, crackers, and network scanners.
+denylist:
+  - nmap
+  - hydra
+  - netcat
+  - nc
+  - hashcat
+  - john
+  - sqlmap
+  - masscan
+  - tcpdump
+  - wireshark
+  - tshark
+  - aircrack-ng
+  - metasploit
+  - msfconsole
+
+# If mode: allowlist, only these processes are permitted.
+# Leave empty to allow all (effectively disables allowlist mode).
+allowlist: []

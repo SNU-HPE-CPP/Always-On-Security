@@ -71,6 +71,14 @@ Currently, a node is marked as suspicious if it exhibits one or more of the foll
 * Excessive number of running processes
 * Suspicious process names (e.g., `stress`, `nmap`, `hydra`, `netcat`)
 
+**Additionally, the system now covers advanced Node-Related Threats:**
+* **Rogue Node Detection**: Rejects telemetry from unauthorized machine IDs.
+* **Replay Attacks**: Blocks duplicated, previously seen messages.
+* **Message Flooding**: Rate limits excessive telemetry from a single node.
+* **Config Tampering**: Hashes critical files (e.g. `/etc/hosts`) against a baseline.
+* **Lateral Movement**: Detects unexpected outbound SSH connections.
+* **Telemetry Tampering**: Validates cryptographic HMAC-SHA256 signatures on all messages.
+
 These detections are rule-based and serve as a proof-of-concept implementation.
 
 ---
@@ -145,10 +153,16 @@ cd Always-On-Security
 
 ## Start the System
 
+Before starting the system for the first time, you must generate the baseline configuration hashes and the `.env` file containing the HMAC secret:
+
+```bash
+python3 generate_baseline.py
+```
+
 Build and start all 9 services:
 
 ```bash
-docker compose up --build
+docker compose up --build -d
 ```
 
 The following containers will start inside the `security_net` bridge network:
@@ -210,6 +224,28 @@ Stop the process:
 ```bash
 CTRL + C
 ```
+
+**Method 3: Advanced Node Attacks**
+
+You can also test the newly added cryptographic and node-level detectors:
+
+**1. Config Tampering (Triggers `CONFIG_TAMPER` alert)**
+Modify a monitored configuration file on a running node:
+```bash
+docker exec node1 sh -c "echo '1.2.3.4 evil.com' >> /etc/hosts"
+```
+
+**2. Rogue Node Injection (Triggers `ROGUE_NODE` alert)**
+Launch an unauthorized node connecting to the controller. *Note: this requires the `.env` file to be present to grab the HMAC secret.*
+```bash
+docker run --rm --network always-on-security_security_net \
+  -e NODE_NAME=rogue99 \
+  -e HMAC_SECRET=$(grep HMAC_SECRET .env | cut -d= -f2) \
+  always-on-security-node1
+```
+
+**3. Telemetry Tampering / Replay Attacks**
+Since all messages are cryptographically signed with HMAC-SHA256, sending raw JSON via `netcat` will be rejected by the Controller. To test `REPLAY_ATTACK` or `TELEMETRY_TAMPER`, you must extract the `HMAC_SECRET` from `.env` and write a custom python script using `pyzmq` to sign and send duplicate `msg_id`s or modify payloads post-signing.
 
 ---
 

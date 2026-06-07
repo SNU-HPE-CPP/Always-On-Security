@@ -21,3 +21,59 @@
     reasons_contains: "Suspicious process"
   severity: 35
   blast_radius: 20
+
+# ── Security Layer Rules ─────────────────────────────────────────────────────
+
+- id: ROGUE_NODE
+  match:
+    reasons_contains: "Rogue node"
+  severity: 50
+  blast_radius: 30
+
+- id: NODE_IMPERSONATION
+  match:
+    reasons_contains: "machine_id"
+  severity: 60
+  blast_radius: 40
+
+- id: REPLAY_ATTACK
+  match:
+    reasons_contains: "Replay attack"
+  severity: 45
+  blast_radius: 25
+
+- id: FLOOD_ATTACK
+  match:
+    reasons_contains: "flooding"
+  severity: 30
+  blast_radius: 15
+
+- id: LATERAL_MOVEMENT
+  match:
+    reasons_contains: "Lateral movement"
+  severity: 55
+  blast_radius: 35
+
+- id: CONFIG_TAMPER
+  match:
+    reasons_contains: "Config tamper"
+  severity: 50
+  blast_radius: 30
+
+- id: UNAUTH_PROCESS
+  match:
+    reasons_contains: "Unauthorized process"
+  severity: 35
+  blast_radius: 20
+
+- id: SILENT_NODE
+  match:
+    reasons_contains: "not reported"
+  severity: 40
+  blast_radius: 20
+
+- id: TELEMETRY_TAMPER
+  match:
+    reasons_contains: "HMAC"
+  severity: 50
+  blast_radius: 30
