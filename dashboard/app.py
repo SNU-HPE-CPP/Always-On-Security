@@ -2,6 +2,8 @@ from flask import Flask, render_template, jsonify
 import sqlite3
 import docker
 from datetime import datetime, timezone
+import os
+
 app = Flask(__name__)
 
 DATABASE = "/data/events.db"
@@ -22,9 +24,9 @@ def index():
             SELECT * FROM events ORDER BY id DESC LIMIT 20
         """).fetchall()
 
-        total_events = conn.execute(
-            "SELECT COUNT(*) as count FROM events"
-        ).fetchone()["count"]
+        total_events = conn.execute("SELECT COUNT(*) as count FROM events").fetchone()[
+            "count"
+        ]
 
         # quarantine bucket (new engine) OR legacy risk_score >= 100
         high_risk = conn.execute("""
@@ -79,6 +81,7 @@ def index():
         wazuh_logs=wazuh_logs,
     )
 
+
 @app.route("/api/nodes")
 def api_nodes():
     conn = get_db_connection()
@@ -91,33 +94,89 @@ def api_nodes():
         conn.close()
     return jsonify(result)
 
+
 @app.route("/api/reset", methods=["POST"])
 def reset_demo():
     conn = get_db_connection()
+
     try:
+        # Clear dashboard/event data
         conn.execute("DELETE FROM events")
         conn.execute("DELETE FROM node_scores")
         conn.execute("DELETE FROM node_status")
-        conn.execute("DELETE FROM wazuh_alerts")
+
+        try:
+            conn.execute("DELETE FROM wazuh_alerts")
+        except sqlite3.OperationalError:
+            pass
+
+        # Reset risk-engine offset
+        try:
+            conn.execute("""
+                UPDATE engine_offset
+                SET last_committed = 0
+                WHERE id = 1
+            """)
+        except sqlite3.OperationalError:
+            pass
+
         conn.commit()
+
     except sqlite3.OperationalError as e:
         return jsonify({"error": f"Database wipe failed: {e}"}), 500
+
     finally:
         conn.close()
 
+    # Reset controller offset file
+    try:
+
+        if os.path.exists("/data/controller.offset"):
+            os.remove("/data/controller.offset")
+
+    except Exception as e:
+        return jsonify({"error": f"Controller offset reset failed: {e}"}), 500
+
+    # Restart services
     try:
         client = docker.from_env()
-        containers_to_restart = ["risk-engine", "controller", "wazuh", "node1", "node2", "node3", "node4"]
+
+        containers_to_restart = [
+            "risk-engine",
+            "controller",
+            "wazuh",
+            "node1",
+            "node2",
+            "node3",
+            "node4",
+        ]
+
         for c_name in containers_to_restart:
             try:
-                c = client.containers.get(c_name)
-                c.restart()
+                container = client.containers.get(c_name)
+
+                try:
+                    container.restart()
+                except Exception:
+                    container.start()
+
             except docker.errors.NotFound:
                 pass
+
     except Exception as e:
         return jsonify({"error": f"Docker restart failed: {e}"}), 500
 
-    return jsonify({"success": True})
+    return jsonify(
+        {
+            "success": True,
+            "message": (
+                "Demo reset complete. "
+                "Database cleared, offsets reset, "
+                "containers restarted."
+            ),
+        }
+    )
+
 
 @app.route("/api/nodes/<node_name>/restart", methods=["POST"])
 def restart_node(node_name):
@@ -125,20 +184,22 @@ def restart_node(node_name):
     try:
         # Wipe the node's cumulative score so it doesn't instantly quarantine again
         conn.execute(
-            "UPDATE node_scores SET cumulative_score = 0.0 WHERE node = ?",
-            (node_name,)
+            "UPDATE node_scores SET cumulative_score = 0.0 WHERE node = ?", (node_name,)
         )
-        
+
         # Overwrite the node status to idle
         ts = datetime.now(timezone.utc).isoformat()
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO node_status (node, status, risk_score, last_updated)
             VALUES (?, 'idle', 0.0, ?)
             ON CONFLICT(node) DO UPDATE SET
                 status = 'idle',
                 risk_score = 0.0,
                 last_updated = ?
-        """, (node_name, ts, ts))
+        """,
+            (node_name, ts, ts),
+        )
         conn.commit()
     except sqlite3.OperationalError as e:
         return jsonify({"error": f"Database error: {e}"}), 500
@@ -154,6 +215,7 @@ def restart_node(node_name):
         return jsonify({"error": f"Docker error: {e}"}), 500
 
     return jsonify({"success": True, "node": node_name})
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)

@@ -1,23 +1,35 @@
 - id: HIGH_CPU
+  severity: 40
+  blast_radius: 50
   match:
-    reasons_contains: "CPU"
-  severity: 10
-  blast_radius: 5
+    reasons_contains: "High CPU usage"
 
 - id: HIGH_MEMORY
+  severity: 40
+  blast_radius: 50
   match:
-    reasons_contains: "memory"
-  severity: 10
-  blast_radius: 5
+    reasons_contains: "High memory usage"
 
-- id: PROCESS_COUNT
+- id: PROCESS_EXPLOSION
+  severity: 60
+  blast_radius: 60
   match:
-    reasons_contains: "Too many"
-  severity: 15
-  blast_radius: 10
+    reasons_contains: "Too many running processes"
 
 - id: SUSPICIOUS_PROCESS
+  severity: 80
+  blast_radius: 80
   match:
-    reasons_contains: "Suspicious process"
-  severity: 35
-  blast_radius: 20
+    reasons_contains: "Suspicious process detected"
+
+- id: FAILED_LOGIN_BURST
+  severity: 90
+  blast_radius: 80
+  match:
+    reasons_contains: "Excessive failed login attempts"
+
+- id: PRIVILEGE_ESCALATION
+  severity: 100
+  blast_radius: 100
+  match:
+    reasons_contains: "Privilege escalation attempts detected"
