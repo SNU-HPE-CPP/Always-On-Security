@@ -3,6 +3,8 @@ import sqlite3
 import docker
 from datetime import datetime, timezone
 import os
+import threading
+import time
 
 app = Flask(__name__)
 
@@ -215,6 +217,60 @@ def restart_node(node_name):
         return jsonify({"error": f"Docker error: {e}"}), 500
 
     return jsonify({"success": True, "node": node_name})
+
+
+def approve_node_background(node_name):
+    for status_step in ['remediating_mock_slurm', 'remediating_mock_ansible', 'remediating_mock_openscap']:
+        conn = get_db_connection()
+        try:
+            ts = datetime.now(timezone.utc).isoformat()
+            conn.execute("UPDATE node_status SET status = ?, last_updated = ? WHERE node = ?", (status_step, ts, node_name))
+            conn.commit()
+        except Exception:
+            pass
+        finally:
+            conn.close()
+        time.sleep(2)
+        
+    conn = get_db_connection()
+    try:
+        conn.execute("UPDATE node_scores SET cumulative_score = 0.0 WHERE node = ?", (node_name,))
+        ts = datetime.now(timezone.utc).isoformat()
+        conn.execute("UPDATE node_status SET status = 'idle', risk_score = 0.0, last_updated = ? WHERE node = ?", (ts, node_name))
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        conn.close()
+        
+    try:
+        client = docker.from_env()
+        container = client.containers.get(node_name)
+        container.unpause()
+    except Exception as e:
+        print(f"Docker unpause error: {e}")
+
+@app.route("/api/nodes/<node_name>/approve", methods=["POST"])
+def approve_node(node_name):
+    threading.Thread(target=approve_node_background, args=(node_name,), daemon=True).start()
+    return jsonify({"success": True})
+
+@app.route("/api/nodes/<node_name>/details", methods=["GET"])
+def node_details(node_name):
+    conn = get_db_connection()
+    try:
+        events = conn.execute("""
+            SELECT timestamp, reasons, risk_score, matched_rules
+            FROM events
+            WHERE node = ? AND bucket IN ('human', 'auto', 'quarantine')
+            ORDER BY id DESC LIMIT 15
+        """, (node_name,)).fetchall()
+        result = [dict(row) for row in events]
+    except sqlite3.OperationalError:
+        result = []
+    finally:
+        conn.close()
+    return jsonify(result)
 
 
 if __name__ == "__main__":

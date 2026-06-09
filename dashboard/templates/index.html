@@ -1,7 +1,6 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <meta http-equiv="refresh" content="5">
     <title>Always-On Security Dashboard</title>
     <style>
         body { font-family: Arial; margin: 40px; background-color: #f4f4f4; }
@@ -28,9 +27,32 @@
         .btn-restart:hover { background-color: #a93226; }
         .btn-reset { background-color: #333; color: white; border: none; padding: 10px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: bold; }
         .btn-reset:hover { background-color: #000; }
+        .modal { display: none; position: fixed; z-index: 10; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.5); }
+        .modal-content { background-color: #fefefe; margin: 10% auto; padding: 20px; border: 1px solid #888; width: 60%; border-radius: 8px; }
+        .close { color: #aaa; float: right; font-size: 28px; font-weight: bold; cursor: pointer; }
+        .close:hover { color: black; }
+        .btn-approve { background-color: #27ae60; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; margin-left: 5px; }
+        .btn-approve:hover { background-color: #1e8449; }
+        .btn-execute { background-color: #27ae60; color: white; border: none; padding: 10px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: bold; margin-top: 15px; }
+        .btn-execute:hover { background-color: #1e8449; }
     </style>
 </head>
 <body>
+
+<div id="reviewModal" class="modal">
+  <div class="modal-content">
+    <span class="close" onclick="closeModal()">&times;</span>
+    <h2>Review Incident: <span id="modalNodeName"></span></h2>
+    <div style="max-height: 300px; overflow-y: auto;">
+      <table id="modalLogTable">
+        <tr><th>Timestamp</th><th>Score</th><th>Rules Matched</th><th>Reasons</th></tr>
+      </table>
+    </div>
+    <div style="text-align: right;">
+        <button id="modalExecuteBtn" class="btn-execute">Execute Remediation Playbook</button>
+    </div>
+  </div>
+</div>
 
 <div style="display: flex; justify-content: space-between; align-items: center;">
     <h1>Always-On Security Dashboard</h1>
@@ -73,14 +95,16 @@
         {% for node in nodes %}
         <tr>
             <td>{{ node.node }}</td>
-            <td class="bucket-{{ 'quarantine' if node.status == 'quarantined' else ('silent' if node.status == 'idle' else 'auto') }}">
+            <td id="status-{{ node.node }}" class="bucket-{{ 'quarantine' if node.status == 'quarantined' else ('human' if node.status == 'awaiting_approval' else ('silent' if node.status == 'idle' else 'auto')) }}">
                 {{ node.status.upper() }}
             </td>
-            <td>{{ "%.2f"|format(node.risk_score) }}</td>
-            <td>{{ node.last_updated }}</td>
-            <td>
+            <td id="score-{{ node.node }}">{{ "%.2f"|format(node.risk_score) }}</td>
+            <td id="last_updated-{{ node.node }}">{{ node.last_updated }}</td>
+            <td id="actions-{{ node.node }}">
                 {% if node.status in ['quarantined', 'unresponsive'] %}
                     <button class="btn-restart" onclick="restartNode('{{ node.node }}')">Restart Node</button>
+                {% elif node.status == 'awaiting_approval' %}
+                    <button class="btn-approve" onclick="openReviewModal('{{ node.node }}')">Review & Approve</button>
                 {% else %}
                     —
                 {% endif %}
@@ -153,6 +177,44 @@
 </div>
 
 <script>
+let currentReviewNode = null;
+
+function openReviewModal(nodeName) {
+    currentReviewNode = nodeName;
+    document.getElementById('modalNodeName').innerText = nodeName;
+    document.getElementById('modalLogTable').innerHTML = '<tr><th>Timestamp</th><th>Score</th><th>Rules Matched</th><th>Reasons</th></tr>';
+    document.getElementById('reviewModal').style.display = 'block';
+    
+    fetch('/api/nodes/' + nodeName + '/details')
+    .then(r => r.json())
+    .then(data => {
+        let table = document.getElementById('modalLogTable');
+        data.forEach(log => {
+            let tr = document.createElement('tr');
+            tr.innerHTML = `<td>${log.timestamp}</td><td>${log.risk_score}</td><td style="font-size:11px;">${log.matched_rules}</td><td style="font-size:11px;">${log.reasons}</td>`;
+            table.appendChild(tr);
+        });
+    });
+}
+
+function closeModal() {
+    document.getElementById('reviewModal').style.display = 'none';
+    currentReviewNode = null;
+}
+
+document.getElementById('modalExecuteBtn').addEventListener('click', function() {
+    if(!currentReviewNode) return;
+    if(!confirm('Execute Mock Slurm -> Ansible -> OpenSCAP pipeline for ' + currentReviewNode + '?')) return;
+    
+    fetch('/api/nodes/' + currentReviewNode + '/approve', { method: 'POST' })
+    .then(response => response.json())
+    .then(data => {
+        if(data.success) {
+            closeModal();
+        }
+    });
+});
+
 function restartNode(nodeName) {
     if(!confirm('Are you sure you want to restart and unquarantine ' + nodeName + '?')) return;
     
@@ -188,6 +250,52 @@ function resetDemo() {
     })
     .catch(error => alert('Network error: ' + error));
 }
+
+// Fast AJAX Polling for Node Statuses (every 1 second)
+setInterval(() => {
+    fetch('/api/nodes')
+    .then(r => r.json())
+    .then(data => {
+        data.forEach(node => {
+            let statusCell = document.getElementById('status-' + node.node);
+            let scoreCell = document.getElementById('score-' + node.node);
+            let lastUpdatedCell = document.getElementById('last_updated-' + node.node);
+            let actionsCell = document.getElementById('actions-' + node.node);
+
+            if (statusCell) {
+                statusCell.innerText = node.status.toUpperCase();
+                let bucketClass = 'silent';
+                if (node.status === 'quarantined') bucketClass = 'quarantine';
+                else if (node.status === 'awaiting_approval') bucketClass = 'human';
+                else if (node.status !== 'idle') bucketClass = 'auto';
+                statusCell.className = 'bucket-' + bucketClass;
+            }
+            if (scoreCell) {
+                scoreCell.innerText = node.risk_score.toFixed(2);
+            }
+            if (lastUpdatedCell) {
+                lastUpdatedCell.innerText = node.last_updated;
+            }
+            if (actionsCell) {
+                if (node.status === 'quarantined' || node.status === 'unresponsive') {
+                    actionsCell.innerHTML = `<button class="btn-restart" onclick="restartNode('${node.node}')">Restart Node</button>`;
+                } else if (node.status === 'awaiting_approval') {
+                    actionsCell.innerHTML = `<button class="btn-approve" onclick="openReviewModal('${node.node}')">Review & Approve</button>`;
+                } else {
+                    actionsCell.innerHTML = '—';
+                }
+            }
+        });
+    });
+}, 1000);
+
+// Smart Full Page Reload for Events & Stats (every 5 seconds)
+setInterval(() => {
+    let modal = document.getElementById('reviewModal');
+    if (!modal || modal.style.display !== 'block') {
+        window.location.reload();
+    }
+}, 5000);
 </script>
 </body>
 </html>

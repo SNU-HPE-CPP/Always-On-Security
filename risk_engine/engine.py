@@ -103,6 +103,10 @@ def heartbeat_checker(store):
 
                 if delta > HEARTBEAT_TIMEOUT:
 
+                    status = store.get_node_status(node)
+                    if status in ["awaiting_approval", "quarantined", "unresponsive"]:
+                        continue
+
                     log.warning(
                         f"HEARTBEAT: {node} unresponsive "
                         f"({delta:.0f}s since last telemetry)"
@@ -259,6 +263,9 @@ def main():
 
             if event.get("is_busy"):
                 status = "busy"
+
+            if decision.bucket == "human":
+                status = "awaiting_approval"
 
             if decision.bucket == "quarantine":
                 status = "quarantined"

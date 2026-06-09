@@ -344,6 +344,17 @@ class Store:
     # NODE STATUS
     # ==================================
 
+    def get_node_status(self, node):
+        row = self.conn.execute(
+            """
+            SELECT status
+            FROM node_status
+            WHERE node=?
+            """,
+            (node,),
+        ).fetchone()
+        return row["status"] if row else "idle"
+
     def update_node_status(
         self,
         node,

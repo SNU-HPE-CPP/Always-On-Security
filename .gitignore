@@ -41,5 +41,6 @@ docker-cheatsheet.md
 Proposed_architecture_diagram.txt
 merge-analysis.md
 network_layers.md
+.agents
 # Local data folder
 data/

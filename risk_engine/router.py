@@ -72,6 +72,8 @@ class Router:
 
             log.warning(f"[HUMAN_REVIEW] " f"node={node} " f"score={score:.2f}")
 
+            self._pause(node)
+
             self._send_wazuh_alert(
                 node=node,
                 risk_score=score,
@@ -95,6 +97,18 @@ class Router:
                 correlated=decision.correlated,
                 severity="CRITICAL",
             )
+
+    def _pause(self, node: str) -> None:
+        client = self._get_docker()
+        if client is None:
+            log.error(f"Cannot pause {node}: Docker unavailable")
+            return
+        try:
+            container = client.containers.get(node)
+            container.pause()
+            log.warning(f"Node {node} paused for human review")
+        except Exception as e:
+            log.error(f"Pause failed for {node}: {e}")
 
     def _quarantine(self, node: str) -> None:
 
