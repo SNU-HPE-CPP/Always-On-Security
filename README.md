@@ -2,6 +2,8 @@
 
 A distributed, container-based security monitoring simulation that demonstrates real-time anomaly detection, cumulative risk scoring, automated quarantine, and live dashboard visualization.
 
+*Note: This project has been significantly enhanced with an **Advanced Security Layer** providing cryptographic node identity, replay protection, and node-level threat detection.*
+
 ---
 
 ## Architecture Overview
@@ -268,3 +270,30 @@ docker compose down                 # Stop and clean up the environment
 * Automated remediation via Docker API
 * Dashboard visualization with Flask + SQLite
 * Mock SIEM integration (Wazuh)
+
+### Advanced Security Enhancements (Recent PR/Merge)
+
+The core monitoring architecture has been significantly hardened to simulate an air-gapped, always-on HPC security environment. This update shifts the project from a simple telemetry dashboard to an active threat-defense system. Key additions include:
+
+* **1. Cryptographic Telemetry Protocol (`node_agent/secure_messenger.py`)**
+  All inter-node communication over ZeroMQ is now signed with an ephemeral HMAC-SHA256 signature. A shared `.env` secret prevents unauthorized actors from injecting fake telemetry or tampering with resource usage metrics in transit.
+
+* **2. Six-Tier Controller Security Gate (`controller/controller.py`)**
+  The central message broker now acts as a hardened security gate. Before forwarding any event to the Risk Engine, it runs 6 distinct checks:
+  - **HMAC Verification:** Rejects tampered payloads.
+  - **ReplayGuard:** Drops duplicated `msg_id`s within a sliding time window.
+  - **FloodGuard:** Enforces rate-limiting to prevent DoS via telemetry flooding.
+  - **Rogue Node Detection:** Blocks traffic from unrecognized `machine_id`s.
+  - **Impersonation Checks:** Flags nodes trying to spoof trusted identities.
+
+* **3. Node-Level Threat Collection (`node_agent/security_collector.py`)**
+  Agents now run a dedicated third thread (`SecurityCollector`) that actively monitors the host for compromise:
+  - **Config Tampering:** Hashes critical system files (`/etc/hosts`, `/etc/passwd`) against a generated baseline (`config_hashes.yaml`).
+  - **Lateral Movement:** Scans active TCP connections for unexpected outbound SSH activity.
+  - **Process Policy Enforcement:** Monitors running processes against an explicit allowlist/denylist.
+
+* **4. Unified Threat Engine (`risk_engine/threat_detector.py` & `alert_manager.py`)**
+  The Risk Engine now integrates 10 advanced threat detectors (Rogue Node, Impersonation, Silent Node Timeout, etc.) directly into the cumulative scoring pipeline. Threats are categorized by severity (INFO to CRITICAL) and persisted in a new `security_alerts` SQLite table.
+
+* **5. Dark-Mode Security Dashboard (`dashboard/templates/index.html`)**
+  The UI was completely overhauled into a modern, dark-mode security operations center (SOC). It features live-updating SVG threat distribution charts, node trust badges (TRUSTED vs ROGUE), protocol integrity counters, and an XSS-safe dynamic alert feed.
