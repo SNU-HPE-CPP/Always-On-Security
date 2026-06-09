@@ -1,0 +1,19 @@
+allowed_nodes:
+  - node1
+  - node2
+  - node3
+  - node4
+
+flood_threshold:
+  max_msgs_per_60s: 20
+
+replay_protection:
+  max_age_seconds: 30
+  window_seq_track: 1000
+
+heartbeat_timeout_seconds:
+  default: 30
+  node1: 30
+  node2: 30
+  node3: 30
+  node4: 30

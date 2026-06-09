@@ -1,0 +1,19 @@
+mode: denylist
+
+denylist:
+  - nmap
+  - hydra
+  - netcat
+  - nc
+  - hashcat
+  - john
+  - sqlmap
+  - masscan
+  - tcpdump
+  - wireshark
+  - tshark
+  - aircrack-ng
+  - metasploit
+  - msfconsole
+
+allowlist: []

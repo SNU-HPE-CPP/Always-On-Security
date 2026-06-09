@@ -25,6 +25,9 @@ import hashlib
 import yaml
 from inotify_simple import INotify, flags
 
+from secure_messenger import SecureMessenger
+from security_collector import SecurityCollector
+
 # ----------------------------------
 # IDENTITY
 # ----------------------------------
@@ -36,6 +39,18 @@ NODE_NAME = os.getenv("NODE_NAME", socket.gethostname())
 # ----------------------------------
 
 context = zmq.Context()
+
+# ----------------------------------
+# SECURE MESSENGER (shared, thread-safe seq counter)
+# ----------------------------------
+
+messenger = SecureMessenger(NODE_NAME)
+
+# ----------------------------------
+# SECURITY COLLECTOR (shared)
+# ----------------------------------
+
+security_collector = SecurityCollector()
 
 # ----------------------------------
 # SUSPICIOUS PROCESS LIST
@@ -412,10 +427,33 @@ def telemetry_monitor():
             )
 
         # ---------------------------
+        # SECURITY COLLECTOR SNAPSHOT
+        # ---------------------------
+
+        sec = security_collector.get_snapshot()
+
+        if sec.get("config_tamper"):
+            event_type = "SUSPICIOUS_ACTIVITY"
+            for tf in sec.get("tampered_files", []):
+                reasons.append(f"Config tamper: {tf['file']}")
+
+        if sec.get("ssh_connections", 0) > 0:
+            event_type = "SUSPICIOUS_ACTIVITY"
+            reasons.append(
+                f"Lateral movement: {sec['ssh_connections']} SSH connections "
+                f"to peers {sec.get('lateral_peers', [])}"
+            )
+
+        if sec.get("unauthorized_procs"):
+            event_type = "SUSPICIOUS_ACTIVITY"
+            for p in sec["unauthorized_procs"]:
+                reasons.append(f"Unauthorized process: {p['name']} (pid={p['pid']})")
+
+        # ---------------------------
         # BUILD EVENT
         # ---------------------------
 
-        event = {
+        raw_payload = {
             "node": NODE_NAME,
             "cpu_usage": cpu,
             "memory_usage": memory,
@@ -426,13 +464,20 @@ def telemetry_monitor():
             "reasons": reasons,
             "is_busy": is_busy,
             "active_job_type": active_job_type,
+            "config_tamper":      sec.get("config_tamper", False),
+            "tampered_files":     sec.get("tampered_files", []),
+            "ssh_connections":    sec.get("ssh_connections", 0),
+            "lateral_peers":      sec.get("lateral_peers", []),
+            "peer_contact_count": sec.get("peer_contact_count", 0),
+            "unauthorized_procs": sec.get("unauthorized_procs", []),
         }
 
         # ---------------------------
-        # SEND TO CONTROLLER
+        # SIGN AND SEND
         # ---------------------------
 
-        sender.send_json(event)
+        signed_msg = messenger.sign(raw_payload)
+        sender.send_json(signed_msg)
 
         if event_type != "NORMAL":
 
@@ -595,7 +640,8 @@ def fim_monitor():
                             "current_state": curr if curr["exists"] else None
                         }
                     }
-                    sender.send_json(event_payload)
+                    signed_fim = messenger.sign(event_payload)
+                    sender.send_json(signed_fim)
                     print(f"[{NODE_NAME}] FIM ALERT TRANSMITTED: {reason_msg} ({fim_event_type})")
 
         except Exception as e:
@@ -603,22 +649,33 @@ def fim_monitor():
             time.sleep(2)
 
 # ==================================
+# THREAD 4: SECURITY COLLECTOR
+# ==================================
+
+def security_collector_thread():
+    """Runs the SecurityCollector main loop in a background thread."""
+    security_collector.run()
+
+
+# ==================================
 # MAIN
 # ==================================
 
-print(f"[{NODE_NAME}] Starting agent...")
+print(f"[{NODE_NAME}] Starting agent (telemetry + FIM + security collector)...")
 
 load_fim_config()
 
-t1 = threading.Thread(target=job_worker, daemon=True)
-t2 = threading.Thread(target=telemetry_monitor, daemon=True)
-t3 = threading.Thread(target=fim_monitor, daemon=True)
+t1 = threading.Thread(target=job_worker,               daemon=True, name="JobWorker")
+t2 = threading.Thread(target=telemetry_monitor,        daemon=True, name="TelemetryMonitor")
+t3 = threading.Thread(target=fim_monitor,              daemon=True, name="FIMMonitor")
+t4 = threading.Thread(target=security_collector_thread, daemon=True, name="SecurityCollector")
 
 t1.start()
 t2.start()
 t3.start()
+t4.start()
 
-print(f"[{NODE_NAME}] Agent running (job worker + telemetry + FIM)")
+print(f"[{NODE_NAME}] Agent running (job worker + telemetry + FIM + security collector)")
 
 while True:
     time.sleep(1)

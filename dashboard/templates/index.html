@@ -1,317 +1,514 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Always-On Security Dashboard</title>
-    <style>
-        body { font-family: Arial; margin: 40px; background-color: #f4f4f4; }
-        h1 { color: #333; }
-        .card { background: white; padding: 20px; margin-bottom: 20px; border-radius: 10px; }
-        .stats { display: flex; gap: 16px; flex-wrap: wrap; }
-        .stat { background: white; padding: 16px 24px; border-radius: 8px; text-align: center; min-width: 120px; }
-        .stat .label { font-size: 12px; color: #666; text-transform: uppercase; }
-        .stat .value { font-size: 28px; font-weight: bold; margin-top: 4px; }
-        .quarantine { color: #c0392b; }
-        .human      { color: #e67e22; }
-        .auto       { color: #2980b9; }
-        .correlated { color: #8e44ad; }
-        table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 10px 12px; border-bottom: 1px solid #ddd; text-align: left; font-size: 13px; }
-        th { background-color: #222; color: white; }
-        tr:hover td { background: #f9f9f9; }
-        .bucket-quarantine { color: #c0392b; font-weight: bold; }
-        .bucket-human      { color: #e67e22; font-weight: bold; }
-        .bucket-auto       { color: #2980b9; font-weight: bold; }
-        .bucket-silent     { color: #7f8c8d; }
-        .corr-badge { background: #8e44ad; color: white; border-radius: 4px; padding: 1px 5px; font-size: 11px; }
-        .btn-restart { background-color: #c0392b; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; }
-        .btn-restart:hover { background-color: #a93226; }
-        .btn-reset { background-color: #333; color: white; border: none; padding: 10px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: bold; }
-        .btn-reset:hover { background-color: #000; }
-        .modal { display: none; position: fixed; z-index: 10; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.5); }
-        .modal-content { background-color: #fefefe; margin: 10% auto; padding: 20px; border: 1px solid #888; width: 60%; border-radius: 8px; }
-        .close { color: #aaa; float: right; font-size: 28px; font-weight: bold; cursor: pointer; }
-        .close:hover { color: black; }
-        .btn-approve { background-color: #27ae60; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; margin-left: 5px; }
-        .btn-approve:hover { background-color: #1e8449; }
-        .btn-execute { background-color: #27ae60; color: white; border: none; padding: 10px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: bold; margin-top: 15px; }
-        .btn-execute:hover { background-color: #1e8449; }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Always-On Security | HPC Cluster Monitor</title>
+  <style>
+    :root {
+      --bg-primary:    #0a0e1a;
+      --bg-card:       #111827;
+      --bg-card2:      #1a2235;
+      --border:        #1e293b;
+      --border-glow:   #3b82f620;
+      --text-primary:  #e2e8f0;
+      --text-muted:    #64748b;
+      --text-dim:      #94a3b8;
+      --accent-blue:   #3b82f6;
+      --accent-cyan:   #06b6d4;
+      --accent-purple: #8b5cf6;
+      --sev-critical:  #ef4444;
+      --sev-high:      #f97316;
+      --sev-medium:    #eab308;
+      --sev-low:       #22c55e;
+      --sev-info:      #3b82f6;
+      --trust-trusted: #22c55e;
+      --trust-suspect: #f97316;
+      --trust-rogue:   #ef4444;
+      --trust-unknown: #64748b;
+      --status-idle:       #22c55e;
+      --status-busy:       #3b82f6;
+      --status-quarantine: #ef4444;
+      --status-unresponsive:#f97316;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg-primary); color: var(--text-primary); min-height: 100vh; overflow-x: hidden; }
+    header { background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%); border-bottom: 1px solid var(--border); padding: 0 2rem; display: flex; align-items: center; justify-content: space-between; height: 64px; position: sticky; top: 0; z-index: 100; box-shadow: 0 4px 24px rgba(0,0,0,0.4); }
+    .header-brand { display: flex; align-items: center; gap: 12px; }
+    .header-icon { width: 36px; height: 36px; background: linear-gradient(135deg, var(--accent-blue), var(--accent-cyan)); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; }
+    .header-title { font-size: 1.1rem; font-weight: 700; letter-spacing: -0.02em; }
+    .header-sub   { font-size: 0.7rem; color: var(--text-muted); letter-spacing: 0.08em; text-transform: uppercase; }
+    .header-status { display: flex; align-items: center; gap: 8px; font-size: 0.75rem; color: var(--text-muted); }
+    .pulse-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--sev-low); box-shadow: 0 0 8px var(--sev-low); animation: pulse 2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(1.3); } }
+    main { padding: 1.5rem 2rem; max-width: 1600px; margin: 0 auto; }
+    .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.5rem; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem; }
+    .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem; }
+    @media (max-width: 1100px) { .grid-4 { grid-template-columns: repeat(2, 1fr); } .grid-3 { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 700px) { .grid-4, .grid-2, .grid-3 { grid-template-columns: 1fr; } main { padding: 1rem; } }
+    .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem 1.5rem; transition: border-color 0.2s, box-shadow 0.2s; }
+    .card:hover { border-color: var(--border-glow); box-shadow: 0 0 20px rgba(59,130,246,0.07); }
+    .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+    .card-title { font-size: 0.75rem; font-weight: 600; color: var(--text-muted); letter-spacing: 0.08em; text-transform: uppercase; }
+    .stat-tile { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem 1.5rem; position: relative; overflow: hidden; transition: transform 0.2s, box-shadow 0.2s; }
+    .stat-tile:hover { transform: translateY(-2px); box-shadow: 0 8px 32px rgba(0,0,0,0.3); }
+    .stat-tile::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: var(--tile-accent, var(--accent-blue)); }
+    .stat-label { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
+    .stat-value { font-size: 2.2rem; font-weight: 700; line-height: 1.1; margin: 0.3rem 0; }
+    .stat-sub   { font-size: 0.72rem; color: var(--text-muted); }
+    .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: 0.65rem; font-weight: 600; letter-spacing: 0.05em; }
+    .badge-critical { background: rgba(239,68,68,0.15); color: var(--sev-critical); border: 1px solid rgba(239,68,68,0.3); }
+    .badge-high     { background: rgba(249,115,22,0.15); color: var(--sev-high);     border: 1px solid rgba(249,115,22,0.3); }
+    .badge-medium   { background: rgba(234,179,8,0.15);  color: var(--sev-medium);   border: 1px solid rgba(234,179,8,0.3); }
+    .badge-low      { background: rgba(34,197,94,0.15);  color: var(--sev-low);      border: 1px solid rgba(34,197,94,0.3); }
+    .badge-info     { background: rgba(59,130,246,0.15); color: var(--sev-info);     border: 1px solid rgba(59,130,246,0.3); }
+    .trust-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-size: 0.65rem; font-weight: 600; }
+    .trust-TRUSTED  { background: rgba(34,197,94,0.15);   color: var(--trust-trusted); }
+    .trust-SUSPECT  { background: rgba(249,115,22,0.15);  color: var(--trust-suspect); }
+    .trust-ROGUE    { background: rgba(239,68,68,0.15);   color: var(--trust-rogue); }
+    .trust-UNKNOWN  { background: rgba(100,116,139,0.15); color: var(--trust-unknown); }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+    th { text-align: left; padding: 0.6rem 0.75rem; font-size: 0.65rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.07em; border-bottom: 1px solid var(--border); }
+    td { padding: 0.7rem 0.75rem; border-bottom: 1px solid rgba(30,41,59,0.6); vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(59,130,246,0.04); }
+    .mono { font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; }
+    .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+    .dot-idle         { background: var(--status-idle); box-shadow: 0 0 6px var(--status-idle); }
+    .dot-busy         { background: var(--status-busy); box-shadow: 0 0 6px var(--status-busy); }
+    .dot-quarantined  { background: var(--status-quarantine); box-shadow: 0 0 6px var(--status-quarantine); animation: pulse 1s infinite; }
+    .dot-unresponsive { background: var(--status-unresponsive); box-shadow: 0 0 6px var(--status-unresponsive); }
+    .threat-chip { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 0.65rem; font-weight: 600; letter-spacing: 0.04em; background: rgba(139,92,246,0.12); color: var(--accent-purple); border: 1px solid rgba(139,92,246,0.25); }
+    .risk-bar-wrap { display: flex; align-items: center; gap: 8px; }
+    .risk-bar-bg   { flex: 1; height: 6px; border-radius: 3px; background: rgba(30,41,59,0.8); }
+    .risk-bar-fill { height: 100%; border-radius: 3px; transition: width 0.6s ease; }
+    .donut-wrap { display: flex; align-items: center; justify-content: center; padding: 1rem 0; }
+    .donut-svg { width: 160px; height: 160px; }
+    .legend { display: flex; flex-direction: column; gap: 6px; padding-left: 1rem; }
+    .legend-item { display: flex; align-items: center; gap: 8px; font-size: 0.75rem; color: var(--text-dim); }
+    .legend-dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+    .integrity-row { display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 0; border-bottom: 1px solid rgba(30,41,59,0.5); }
+    .integrity-row:last-child { border-bottom: none; }
+    .integrity-label { font-size: 0.78rem; color: var(--text-dim); }
+    .integrity-value { font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; font-weight: 600; }
+    .alert-feed { max-height: 420px; overflow-y: auto; }
+    .alert-feed::-webkit-scrollbar { width: 4px; }
+    .alert-feed::-webkit-scrollbar-track { background: var(--bg-card); }
+    .alert-feed::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+    .empty-state { text-align: center; padding: 2rem; color: var(--text-muted); font-size: 0.8rem; }
+    .refresh-tag { font-size: 0.65rem; color: var(--text-muted); background: rgba(30,41,59,0.8); padding: 2px 8px; border-radius: 4px; }
+    .glow-red    { color: var(--sev-critical); text-shadow: 0 0 16px rgba(239,68,68,0.5); }
+    .glow-orange { color: var(--sev-high);     text-shadow: 0 0 16px rgba(249,115,22,0.5); }
+    .glow-green  { color: var(--sev-low);      text-shadow: 0 0 16px rgba(34,197,94,0.5); }
+    .glow-blue   { color: var(--accent-blue);  text-shadow: 0 0 16px rgba(59,130,246,0.5); }
+    .glow-purple { color: var(--accent-purple); }
+  </style>
 </head>
 <body>
 
-<div id="reviewModal" class="modal">
-  <div class="modal-content">
-    <span class="close" onclick="closeModal()">&times;</span>
-    <h2>Review Incident: <span id="modalNodeName"></span></h2>
-    <div style="max-height: 300px; overflow-y: auto;">
-      <table id="modalLogTable">
-        <tr><th>Timestamp</th><th>Score</th><th>Rules Matched</th><th>Reasons</th></tr>
-      </table>
-    </div>
-    <div style="text-align: right;">
-        <button id="modalExecuteBtn" class="btn-execute">Execute Remediation Playbook</button>
+<header>
+  <div class="header-brand">
+    <div class="header-icon">🛡</div>
+    <div>
+      <div class="header-title">Always-On Security</div>
+      <div class="header-sub">HPC Air-Gapped Cluster · Security Operations</div>
     </div>
   </div>
-</div>
+  <div class="header-status">
+    <div class="pulse-dot"></div>
+    <span id="live-clock">–</span>
+    &nbsp;·&nbsp;
+    <span class="refresh-tag">Auto-refresh 5s</span>
+  </div>
+</header>
 
-<div style="display: flex; justify-content: space-between; align-items: center;">
-    <h1>Always-On Security Dashboard</h1>
-    <button class="btn-reset" onclick="resetDemo()">Reset Demo</button>
-</div>
+<main>
 
-<div class="stats">
-    <div class="stat">
-        <div class="label">Total Events</div>
-        <div class="value">{{ total_events }}</div>
+  <!-- Row 1: Stat tiles -->
+  <div class="grid-4" id="stat-tiles">
+    <div class="stat-tile" style="--tile-accent:var(--sev-critical)">
+      <div class="stat-label">Total Alerts</div>
+      <div class="stat-value glow-red"    id="tile-total">–</div>
+      <div class="stat-sub">Security incidents</div>
     </div>
-    <div class="stat">
-        <div class="label">Quarantined</div>
-        <div class="value quarantine">{{ high_risk }}</div>
+    <div class="stat-tile" style="--tile-accent:var(--sev-high)">
+      <div class="stat-label">Critical / High</div>
+      <div class="stat-value glow-orange" id="tile-critical">–</div>
+      <div class="stat-sub">Require immediate action</div>
     </div>
-    <div class="stat">
-        <div class="label">Human Review</div>
-        <div class="value human">{{ human_count }}</div>
+    <div class="stat-tile" style="--tile-accent:var(--accent-purple)">
+      <div class="stat-label">Alerts (24h)</div>
+      <div class="stat-value glow-purple" id="tile-24h">–</div>
+      <div class="stat-sub">Last 24 hours</div>
     </div>
-    <div class="stat">
-        <div class="label">Auto Remediation</div>
-        <div class="value auto">{{ auto_count }}</div>
+    <div class="stat-tile" style="--tile-accent:var(--accent-cyan)">
+      <div class="stat-label">Replay Attempts</div>
+      <div class="stat-value glow-blue"   id="tile-replay">–</div>
+      <div class="stat-sub">Protocol attacks blocked</div>
     </div>
-    <div class="stat">
-        <div class="label">Correlated</div>
-        <div class="value correlated">{{ correlated_count }}</div>
-    </div>
-</div>
+  </div>
 
-<div class="card" style="margin-top:24px;">
-    <h2>Node Status</h2>
-    <table>
-        <tr>
-            <th>Node</th>
-            <th>Status</th>
-            <th>Risk Score</th>
-            <th>Last Updated</th>
-            <th>Actions</th>
-        </tr>
-        {% for node in nodes %}
-        <tr>
-            <td>{{ node.node }}</td>
-            <td id="status-{{ node.node }}" class="bucket-{{ 'quarantine' if node.status == 'quarantined' else ('human' if node.status == 'awaiting_approval' else ('silent' if node.status == 'idle' else 'auto')) }}">
-                {{ node.status.upper() }}
-            </td>
-            <td id="score-{{ node.node }}">{{ "%.2f"|format(node.risk_score) }}</td>
-            <td id="last_updated-{{ node.node }}">{{ node.last_updated }}</td>
-            <td id="actions-{{ node.node }}">
-                {% if node.status in ['quarantined', 'unresponsive'] %}
-                    <button class="btn-restart" onclick="restartNode('{{ node.node }}')">Restart Node</button>
-                {% elif node.status == 'awaiting_approval' %}
-                    <button class="btn-approve" onclick="openReviewModal('{{ node.node }}')">Review & Approve</button>
-                {% else %}
-                    —
-                {% endif %}
-            </td>
-        </tr>
-        {% endfor %}
-    </table>
-</div>
+  <!-- Row 2: Node Trust + Threat Distribution -->
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">🖥 Node Trust &amp; Status</span>
+        <span class="refresh-tag" id="node-last-refresh">–</span>
+      </div>
+      <div class="table-wrap">
+        <table id="node-table">
+          <thead><tr><th>Node</th><th>Status</th><th>Trust</th><th>Risk Score</th><th>Replay</th><th>Floods</th><th>Last Seen</th></tr></thead>
+          <tbody id="node-tbody"><tr><td colspan="7" class="empty-state">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">🎯 Threat Distribution</span>
+        <span class="refresh-tag">Live</span>
+      </div>
+      <div style="display:flex; align-items:center; gap:1rem;">
+        <div class="donut-wrap" style="flex-shrink:0;">
+          <svg class="donut-svg" id="donut-svg" viewBox="0 0 160 160"></svg>
+        </div>
+        <div class="legend" id="threat-legend"></div>
+      </div>
+    </div>
+  </div>
 
-<div class="card" style="margin-top:24px;">
-    <h2>Recent Events (last 20)</h2>
-    <table>
-        <tr>
-            <th>Timestamp</th>
-            <th>Node</th>
-            <th>Details / Metrics</th>
-            <th>Event Type</th>
-            <th>Bucket</th>
-            <th>Event Score</th>
-            <th>Cumulative Score</th>
-            <th>Rules Matched</th>
-        </tr>
-        {% for event in events %}
-        <tr>
-            <td>{{ event.timestamp }}</td>
-            <td>{{ event.node }}</td>
+  <!-- Row 3: Protocol Integrity + Severity Breakdown + Node Identity -->
+  <div class="grid-3">
+    <div class="card">
+      <div class="card-header"><span class="card-title">🔐 Protocol Integrity</span></div>
+      <div id="integrity-panel">
+        <div class="integrity-row"><span class="integrity-label">HMAC Signing</span><span class="integrity-value glow-green">ACTIVE</span></div>
+        <div class="integrity-row"><span class="integrity-label">Replay Protection</span><span class="integrity-value glow-green">ACTIVE</span></div>
+        <div class="integrity-row"><span class="integrity-label">Replay Attempts Blocked</span><span class="integrity-value glow-red" id="proto-replay">–</span></div>
+        <div class="integrity-row"><span class="integrity-label">Flood Incidents</span><span class="integrity-value glow-orange" id="proto-floods">–</span></div>
+        <div class="integrity-row"><span class="integrity-label">Rogue Nodes Detected</span><span class="integrity-value glow-red" id="proto-rogue">–</span></div>
+        <div class="integrity-row"><span class="integrity-label">Impersonation Attempts</span><span class="integrity-value glow-orange" id="proto-impersonation">–</span></div>
+        <div class="integrity-row"><span class="integrity-label">Config Tampers</span><span class="integrity-value glow-orange" id="proto-config">–</span></div>
+        <div class="integrity-row"><span class="integrity-label">Lateral Movements</span><span class="integrity-value glow-red" id="proto-lateral">–</span></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><span class="card-title">⚠ Severity Breakdown</span></div>
+      <div id="severity-bars" style="display:flex; flex-direction:column; gap:14px; padding-top:0.5rem;"><div class="empty-state">Loading…</div></div>
+    </div>
+    <div class="card">
+      <div class="card-header"><span class="card-title">🪪 Node Identity Registry</span></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Node</th><th>Machine ID</th><th>Trust</th><th>First Seen</th></tr></thead>
+          <tbody id="identity-tbody"><tr><td colspan="4" class="empty-state">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Row 4: Security Alert Feed -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">🚨 Security Alert Feed</span>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <select id="sev-filter" style="background:var(--bg-card2); color:var(--text-dim); border:1px solid var(--border); border-radius:6px; padding:3px 8px; font-size:0.72rem; cursor:pointer;">
+          <option value="">All severities</option>
+          <option value="CRITICAL">Critical</option>
+          <option value="HIGH">High</option>
+          <option value="MEDIUM">Medium</option>
+          <option value="LOW">Low</option>
+          <option value="INFO">Info</option>
+        </select>
+        <span class="refresh-tag" id="alert-last-refresh">–</span>
+      </div>
+    </div>
+    <div class="alert-feed">
+      <table>
+        <thead><tr><th>Time</th><th>Node</th><th>Severity</th><th>Threat Type</th><th>Description</th><th>Action</th></tr></thead>
+        <tbody id="alert-tbody"><tr><td colspan="6" class="empty-state">Loading security alerts…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Row 5: Telemetry Events (with FIM display) -->
+  <div class="card" style="margin-top:1.5rem;">
+    <div class="card-header">
+      <span class="card-title">📋 Recent Telemetry Events</span>
+      <div style="display:flex; gap:12px;">
+        <span class="stat-sub">Total: <strong style="color:var(--text-primary)">{{ total_events }}</strong></span>
+        <span class="stat-sub">Quarantine: <strong class="glow-red">{{ high_risk }}</strong></span>
+        <span class="stat-sub">Correlated: <strong class="glow-purple">{{ correlated_count }}</strong></span>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Timestamp</th><th>Node</th><th>CPU%</th><th>Mem%</th>
+            <th>Details</th><th>Event Type</th><th>Bucket</th><th>Score</th><th>Rules</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for event in events %}
+          <tr>
+            <td class="mono">{{ event.timestamp[:19] if event.timestamp else '—' }}</td>
+            <td><strong>{{ event.node }}</strong></td>
+            <td>{{ "%.1f"|format(event.cpu_usage or 0) }}</td>
+            <td>{{ "%.1f"|format(event.memory_usage or 0) }}</td>
             <td>
-                {% if event.event_type == 'FIM_EVENT' %}
-                    <span style="font-weight:bold; color:#d35400;">{{ event.fim_event_type or 'FIM' }}</span>: <code style="background:#eee; padding:2px 4px; border-radius:3px;">{{ event.file_path }}</code>
-                    {% if event.permissions %}
-                        <div style="font-size: 11px; color: #666; margin-top: 2px;">
-                            Perms: {{ event.permissions }} | Size: {{ event.file_size }} B
-                        </div>
-                    {% endif %}
-                {% else %}
-                    CPU: {{ "%.1f"|format(event.cpu_usage or 0) }}% | Mem: {{ "%.1f"|format(event.memory_usage or 0) }}%
+              {% if event.event_type == 'FIM_EVENT' %}
+                <span style="font-weight:600; color:var(--sev-high);">{{ event.fim_event_type or 'FIM' }}</span>
+                <div class="mono" style="font-size:0.63rem; color:var(--text-muted); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:180px;" title="{{ event.file_path }}">{{ event.file_path or '—' }}</div>
+                {% if event.permissions %}
+                  <div style="font-size:0.6rem; color:var(--text-dim); margin-top:1px;">perms: {{ event.permissions }}</div>
                 {% endif %}
+              {% else %}
+                <span style="color:var(--text-muted); font-size:0.72rem;">—</span>
+              {% endif %}
             </td>
             <td>
-                {{ event.event_type }}
-                {% if event.reasons and event.reasons != '[]' %}
-                    <div style="font-size:11px; color:#c0392b; margin-top:2px;">
-                        {{ event.reasons | replace('["', '') | replace('"]', '') | replace('"', '') }}
-                    </div>
-                {% endif %}
+              {% if event.event_type == 'SUSPICIOUS_ACTIVITY' %}
+                <span style="color:var(--sev-high)">⚠ {{ event.event_type }}</span>
+              {% elif event.event_type == 'SECURITY_ALERT' %}
+                <span style="color:var(--sev-critical)">🚨 {{ event.event_type }}</span>
+              {% elif event.event_type == 'NODE_UNRESPONSIVE' %}
+                <span style="color:var(--sev-medium)">💤 {{ event.event_type }}</span>
+              {% elif event.event_type == 'FIM_EVENT' %}
+                <span style="color:var(--sev-medium)">📁 FIM_EVENT</span>
+              {% else %}
+                <span style="color:var(--text-muted)">{{ event.event_type }}</span>
+              {% endif %}
             </td>
-            <td class="bucket-{{ event.bucket or 'silent' }}">
-                {{ (event.bucket or '—').upper() }}
-                {% if event.correlated %}<span class="corr-badge">CORR</span>{% endif %}
+            <td>
+              {% set b = event.bucket or 'silent' %}
+              {% if b == 'quarantine' %}
+                <span class="badge badge-critical">QUARANTINE</span>
+              {% elif b == 'human' %}
+                <span class="badge badge-high">HUMAN REVIEW</span>
+              {% elif b == 'auto' %}
+                <span class="badge badge-medium">AUTO</span>
+              {% else %}
+                <span class="badge badge-info">{{ b.upper() }}</span>
+              {% endif %}
+              {% if event.correlated %}<span class="badge badge-low" style="margin-left:4px;">CORR</span>{% endif %}
             </td>
-            <td>{{ "%.4f"|format(event.weighted_score or 0) }}</td>
-            <td>{{ event.risk_score }}</td>
-            <td style="font-size:11px; color:#555;">{{ event.matched_rules or '—' }}</td>
-        </tr>
-        {% endfor %}
-    </table>
-</div>
+            <td class="mono">{{ "%.2f"|format(event.risk_score or 0) }}</td>
+            <td style="font-size:0.68rem; color:var(--text-muted);">{{ event.matched_rules or '—' }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="9" class="empty-state">No events yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
 
-<div class="card" style="margin-top:24px;">
-    <h2>Mock Wazuh SIEM Alerts</h2>
-    <table>
-        <tr>
-            <th>Timestamp</th>
-            <th>Severity</th>
-            <th>Node</th>
-            <th>Risk Score</th>
-            <th>Reasons</th>
-        </tr>
-        {% for alert in wazuh_logs %}
-        <tr>
-            <td>{{ alert.timestamp }}</td>
-            <td style="font-weight:bold; color: {{ '#c0392b' if alert.severity == 'CRITICAL' else ('#e67e22' if alert.severity == 'HIGH' else '#2980b9') }}">
-                {{ alert.severity }}
-            </td>
-            <td>{{ alert.node }}</td>
-            <td>{{ "%.2f"|format(alert.risk_score) }}</td>
-            <td style="font-size:11px; color:#555;">{{ alert.reasons }}</td>
-        </tr>
-        {% endfor %}
-        {% if not wazuh_logs %}
-        <tr>
-            <td colspan="5" style="text-align: center; color: #7f8c8d; font-style: italic;">No Wazuh alerts logged yet...</td>
-        </tr>
-        {% endif %}
-    </table>
-</div>
+</main>
 
 <script>
-let currentReviewNode = null;
-
-function openReviewModal(nodeName) {
-    currentReviewNode = nodeName;
-    document.getElementById('modalNodeName').innerText = nodeName;
-    document.getElementById('modalLogTable').innerHTML = '<tr><th>Timestamp</th><th>Score</th><th>Rules Matched</th><th>Reasons</th></tr>';
-    document.getElementById('reviewModal').style.display = 'block';
-    
-    fetch('/api/nodes/' + nodeName + '/details')
-    .then(r => r.json())
-    .then(data => {
-        let table = document.getElementById('modalLogTable');
-        data.forEach(log => {
-            let tr = document.createElement('tr');
-            tr.innerHTML = `<td>${log.timestamp}</td><td>${log.risk_score}</td><td style="font-size:11px;">${log.matched_rules}</td><td style="font-size:11px;">${log.reasons}</td>`;
-            table.appendChild(tr);
-        });
-    });
+function el(tag, attrs, ...children) {
+  const e = document.createElement(tag);
+  if (attrs) for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'class') e.className = v;
+    else if (k === 'style') e.style.cssText = v;
+    else e.setAttribute(k, v);
+  }
+  for (const c of children) {
+    if (typeof c === 'string') e.appendChild(document.createTextNode(c));
+    else if (c) e.appendChild(c);
+  }
+  return e;
 }
 
-function closeModal() {
-    document.getElementById('reviewModal').style.display = 'none';
-    currentReviewNode = null;
+function setText(id, text) {
+  const node = document.getElementById(id);
+  if (node) node.textContent = text;
 }
 
-document.getElementById('modalExecuteBtn').addEventListener('click', function() {
-    if(!currentReviewNode) return;
-    if(!confirm('Execute Mock Slurm -> Ansible -> OpenSCAP pipeline for ' + currentReviewNode + '?')) return;
-    
-    fetch('/api/nodes/' + currentReviewNode + '/approve', { method: 'POST' })
-    .then(response => response.json())
-    .then(data => {
-        if(data.success) {
-            closeModal();
-        }
-    });
-});
+function fmtTime(iso) { if (!iso) return '—'; try { return iso.replace('T',' ').slice(0,19); } catch { return iso; } }
+function fmtShort(iso) { if (!iso) return '—'; try { return iso.slice(11,19); } catch { return iso; } }
 
-function restartNode(nodeName) {
-    if(!confirm('Are you sure you want to restart and unquarantine ' + nodeName + '?')) return;
-    
-    fetch('/api/nodes/' + nodeName + '/restart', {
-        method: 'POST'
-    })
-    .then(response => response.json())
-    .then(data => {
-        if(data.success) {
-            alert(nodeName + ' successfully restarted!');
-            window.location.reload();
-        } else {
-            alert('Error: ' + data.error);
-        }
-    })
-    .catch(error => {
-        alert('Network error: ' + error);
-    });
+function sevBadge(severity) {
+  const cls = { CRITICAL:'badge badge-critical', HIGH:'badge badge-high', MEDIUM:'badge badge-medium', LOW:'badge badge-low', INFO:'badge badge-info' }[severity] || 'badge badge-info';
+  return el('span', {class: cls}, severity);
 }
 
-function resetDemo() {
-    if(!confirm('Are you sure you want to completely wipe the database and restart all nodes? This will reset the demo to a clean state!')) return;
-    
-    fetch('/api/reset', { method: 'POST' })
-    .then(response => response.json())
-    .then(data => {
-        if(data.success) {
-            alert('Environment successfully reset!');
-            window.location.reload();
-        } else {
-            alert('Error: ' + data.error);
-        }
-    })
-    .catch(error => alert('Network error: ' + error));
+function trustBadge(trust) {
+  const t = (trust || 'UNKNOWN').toUpperCase();
+  return el('span', {class: `trust-badge trust-${t}`}, t);
 }
 
-// Fast AJAX Polling for Node Statuses (every 1 second)
-setInterval(() => {
-    fetch('/api/nodes')
-    .then(r => r.json())
-    .then(data => {
-        data.forEach(node => {
-            let statusCell = document.getElementById('status-' + node.node);
-            let scoreCell = document.getElementById('score-' + node.node);
-            let lastUpdatedCell = document.getElementById('last_updated-' + node.node);
-            let actionsCell = document.getElementById('actions-' + node.node);
+function statusDot(status) {
+  const map = { idle:'dot-idle', busy:'dot-busy', quarantined:'dot-quarantined', unresponsive:'dot-unresponsive' };
+  const wrap = el('span');
+  wrap.appendChild(el('span', {class: `status-dot ${map[status] || 'dot-idle'}`}));
+  wrap.appendChild(document.createTextNode(status.toUpperCase()));
+  return wrap;
+}
 
-            if (statusCell) {
-                statusCell.innerText = node.status.toUpperCase();
-                let bucketClass = 'silent';
-                if (node.status === 'quarantined') bucketClass = 'quarantine';
-                else if (node.status === 'awaiting_approval') bucketClass = 'human';
-                else if (node.status !== 'idle') bucketClass = 'auto';
-                statusCell.className = 'bucket-' + bucketClass;
-            }
-            if (scoreCell) {
-                scoreCell.innerText = node.risk_score.toFixed(2);
-            }
-            if (lastUpdatedCell) {
-                lastUpdatedCell.innerText = node.last_updated;
-            }
-            if (actionsCell) {
-                if (node.status === 'quarantined' || node.status === 'unresponsive') {
-                    actionsCell.innerHTML = `<button class="btn-restart" onclick="restartNode('${node.node}')">Restart Node</button>`;
-                } else if (node.status === 'awaiting_approval') {
-                    actionsCell.innerHTML = `<button class="btn-approve" onclick="openReviewModal('${node.node}')">Review & Approve</button>`;
-                } else {
-                    actionsCell.innerHTML = '—';
-                }
-            }
-        });
-    });
-}, 1000);
+function riskBar(score) {
+  const pct   = Math.min(100, Math.round(score));
+  const color = pct >= 100 ? 'var(--sev-critical)' : pct >= 70 ? 'var(--sev-high)' : pct >= 30 ? 'var(--sev-medium)' : 'var(--sev-low)';
+  const wrap = el('div', {class:'risk-bar-wrap'});
+  const bg   = el('div', {class:'risk-bar-bg'});
+  const fill = el('div', {class:'risk-bar-fill', style:`width:${pct}%;background:${color}`});
+  bg.appendChild(fill);
+  wrap.appendChild(bg);
+  wrap.appendChild(document.createTextNode(pct.toFixed(0)));
+  return wrap;
+}
 
-// Smart Full Page Reload for Events & Stats (every 5 seconds)
-setInterval(() => {
-    let modal = document.getElementById('reviewModal');
-    if (!modal || modal.style.display !== 'block') {
-        window.location.reload();
+function updateClock() { setText('live-clock', new Date().toUTCString().slice(17,25) + ' UTC'); }
+setInterval(updateClock, 1000); updateClock();
+
+async function fetchJSON(url) {
+  try { const res = await fetch(url, {credentials:'same-origin'}); if (!res.ok) return null; return await res.json(); }
+  catch { return null; }
+}
+
+async function refreshNodeTable() {
+  const data = await fetchJSON('/api/nodes/security');
+  const tbody = document.getElementById('node-tbody');
+  if (!tbody) return;
+  tbody.replaceChildren();
+  if (!data || !data.length) { tbody.appendChild(el('tr',null,el('td',{colspan:'7',class:'empty-state'},'No nodes registered yet.'))); return; }
+  for (const n of data) {
+    tbody.appendChild(el('tr',null,
+      el('td',null,el('strong',null,n.node||'—')),
+      el('td',null,statusDot(n.status||'idle')),
+      el('td',null,trustBadge(n.trust_status)),
+      el('td',null,riskBar(n.risk_score||0)),
+      el('td',{class:'mono',style:n.replay_count>0?'color:var(--sev-critical)':''},String(n.replay_count||0)),
+      el('td',{class:'mono',style:n.flood_count>0?'color:var(--sev-high)':''},String(n.flood_count||0)),
+      el('td',{class:'mono',style:'color:var(--text-muted)'},fmtShort(n.last_updated)),
+    ));
+  }
+  setText('node-last-refresh','Updated '+fmtShort(new Date().toISOString()));
+}
+
+async function refreshIdentityTable() {
+  const data = await fetchJSON('/api/nodes/identity');
+  const tbody = document.getElementById('identity-tbody');
+  if (!tbody) return;
+  tbody.replaceChildren();
+  if (!data || !data.length) { tbody.appendChild(el('tr',null,el('td',{colspan:'4',class:'empty-state'},'No identity records yet.'))); return; }
+  for (const n of data) {
+    tbody.appendChild(el('tr',null,
+      el('td',null,el('strong',null,n.node||'—')),
+      el('td',{class:'mono',style:'color:var(--text-muted)'},(n.machine_id||'').slice(0,12)+'…'),
+      el('td',null,trustBadge(n.trust_status)),
+      el('td',{class:'mono',style:'color:var(--text-muted)'},fmtTime(n.first_seen)),
+    ));
+  }
+}
+
+async function refreshAlerts() {
+  const sev  = document.getElementById('sev-filter')?.value || '';
+  const url  = sev ? `/api/alerts?limit=50&severity=${encodeURIComponent(sev)}` : '/api/alerts?limit=50';
+  const data = await fetchJSON(url);
+  const tbody = document.getElementById('alert-tbody');
+  if (!tbody) return;
+  tbody.replaceChildren();
+  if (!data || !data.length) { tbody.appendChild(el('tr',null,el('td',{colspan:'6',class:'empty-state'},'✅ No alerts. System secure.'))); return; }
+  for (const a of data) {
+    tbody.appendChild(el('tr',null,
+      el('td',{class:'mono',style:'color:var(--text-muted)'},fmtTime(a.timestamp)),
+      el('td',null,el('strong',null,a.node_id||'—')),
+      el('td',null,sevBadge(a.severity||'INFO')),
+      el('td',null,el('span',{class:'threat-chip'},a.threat_type||'—')),
+      el('td',{style:'max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-dim)'},a.description||'—'),
+      el('td',{style:'font-size:0.68rem;color:var(--text-muted);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'},a.recommended_action||'—'),
+    ));
+  }
+  setText('alert-last-refresh','Updated '+fmtShort(new Date().toISOString()));
+}
+
+document.getElementById('sev-filter')?.addEventListener('change', refreshAlerts);
+
+const THREAT_COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#3b82f6','#8b5cf6','#06b6d4','#ec4899','#14b8a6','#a855f7'];
+
+function drawDonut(segments) {
+  const svg = document.getElementById('donut-svg');
+  if (!svg) return;
+  svg.replaceChildren();
+  const total = segments.reduce((s,x)=>s+x.value,0);
+  if (!total) {
+    const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    c.setAttribute('cx','80'); c.setAttribute('cy','80'); c.setAttribute('r','60');
+    c.setAttribute('fill','none'); c.setAttribute('stroke','var(--border)'); c.setAttribute('stroke-width','24');
+    svg.appendChild(c); return;
+  }
+  const cx=80, cy=80, r=60, sw=24, circ=2*Math.PI*r;
+  let offset=0;
+  for (const seg of segments) {
+    const pct=seg.value/total, dash=pct*circ, gap=circ-dash, rot=offset*360-90;
+    const c=document.createElementNS('http://www.w3.org/2000/svg','circle');
+    c.setAttribute('cx',cx); c.setAttribute('cy',cy); c.setAttribute('r',r);
+    c.setAttribute('fill','none'); c.setAttribute('stroke',seg.color); c.setAttribute('stroke-width',sw);
+    c.setAttribute('stroke-dasharray',`${dash} ${gap}`);
+    c.setAttribute('transform',`rotate(${rot},${cx},${cy})`);
+    svg.appendChild(c); offset+=pct;
+  }
+  const t=document.createElementNS('http://www.w3.org/2000/svg','text');
+  t.setAttribute('x','80'); t.setAttribute('y','80'); t.setAttribute('text-anchor','middle');
+  t.setAttribute('dominant-baseline','middle'); t.setAttribute('font-size','22');
+  t.setAttribute('font-weight','700'); t.setAttribute('fill','#e2e8f0'); t.textContent=total;
+  svg.appendChild(t);
+}
+
+async function refreshStats() {
+  const data = await fetchJSON('/api/alerts/stats');
+  if (!data) return;
+  setText('tile-total',   String(data.total||0));
+  setText('tile-24h',     String(data.recent_24h||0));
+  setText('tile-replay',  String(data.replay_total||0));
+  setText('proto-replay', String(data.replay_total||0));
+  const sev = data.by_severity||{};
+  setText('tile-critical', String((sev.CRITICAL||0)+(sev.HIGH||0)));
+  const types = data.by_type||{};
+  setText('proto-floods',        String(types.FLOOD_ATTACK||0));
+  setText('proto-rogue',         String(types.ROGUE_NODE||0));
+  setText('proto-impersonation', String(types.NODE_IMPERSONATION||0));
+  setText('proto-config',        String(types.CONFIG_TAMPER||0));
+  setText('proto-lateral',       String(types.LATERAL_MOVEMENT||0));
+  const entries = Object.entries(types).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  const segments = entries.map(([label,value],i)=>({label,value,color:THREAT_COLORS[i%THREAT_COLORS.length]}));
+  drawDonut(segments);
+  const legend = document.getElementById('threat-legend');
+  if (legend) {
+    legend.replaceChildren();
+    for (const seg of segments)
+      legend.appendChild(el('div',{class:'legend-item'},el('div',{class:'legend-dot',style:`background:${seg.color}`}),el('span',null,`${seg.label} (${seg.value})`)));
+    if (!segments.length) legend.appendChild(el('div',{class:'empty-state'},'No threat data yet.'));
+  }
+  const sevBars = document.getElementById('severity-bars');
+  if (sevBars) {
+    sevBars.replaceChildren();
+    const sevOrder=['CRITICAL','HIGH','MEDIUM','LOW','INFO'];
+    const sevColors={CRITICAL:'var(--sev-critical)',HIGH:'var(--sev-high)',MEDIUM:'var(--sev-medium)',LOW:'var(--sev-low)',INFO:'var(--sev-info)'};
+    const maxSev=Math.max(...Object.values(sev),1);
+    for (const s of sevOrder) {
+      const count=sev[s]||0, pct=(count/maxSev)*100;
+      const row=el('div',null);
+      const hdr=el('div',{style:'display:flex;justify-content:space-between;margin-bottom:4px;'});
+      hdr.appendChild(el('span',{style:'font-size:0.72rem;color:var(--text-dim)'},s));
+      hdr.appendChild(el('span',{style:`font-size:0.72rem;font-weight:600;color:${sevColors[s]}`},String(count)));
+      const bg=el('div',{class:'risk-bar-bg',style:'height:8px'});
+      bg.appendChild(el('div',{class:'risk-bar-fill',style:`width:${pct}%;background:${sevColors[s]};height:8px`}));
+      row.appendChild(hdr); row.appendChild(bg);
+      sevBars.appendChild(row);
     }
-}, 5000);
+  }
+}
+
+async function refresh() {
+  await Promise.all([refreshStats(), refreshNodeTable(), refreshIdentityTable(), refreshAlerts()]);
+}
+
+refresh();
+setInterval(refresh, 5000);
 </script>
 </body>
 </html>

@@ -1,276 +1,176 @@
-from flask import Flask, render_template, jsonify
+from flask import Flask, jsonify, render_template, request
 import sqlite3
-import docker
-from datetime import datetime, timezone
-import os
-import threading
-import time
+import json
 
 app = Flask(__name__)
-
 DATABASE = "/data/events.db"
 
 
-def get_db_connection():
+@app.after_request
+def set_security_headers(response):
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+        "object-src 'none'; frame-ancestors 'none';"
+    )
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"]        = "DENY"
+    response.headers["Referrer-Policy"]        = "strict-origin-when-cross-origin"
+    response.headers["Cache-Control"]          = "no-store"
+    return response
+
+
+def get_db():
     conn = sqlite3.connect(DATABASE)
     conn.row_factory = sqlite3.Row
     return conn
 
 
+def _table_exists(conn, table: str) -> bool:
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,)
+    ).fetchone()
+    return row is not None
+
+
 @app.route("/")
 def index():
-    conn = get_db_connection()
-
+    conn = get_db()
     try:
-        events = conn.execute("""
-            SELECT * FROM events ORDER BY id DESC LIMIT 20
-        """).fetchall()
-
-        total_events = conn.execute("SELECT COUNT(*) as count FROM events").fetchone()[
-            "count"
-        ]
-
-        # quarantine bucket (new engine) OR legacy risk_score >= 100
-        high_risk = conn.execute("""
-            SELECT COUNT(*) as count FROM events
-            WHERE bucket = 'quarantine'
-               OR (bucket IS NULL AND risk_score >= 100)
-        """).fetchone()["count"]
-
-        auto_count = conn.execute("""
-            SELECT COUNT(*) as count FROM events WHERE bucket = 'auto'
-        """).fetchone()["count"]
-
-        human_count = conn.execute("""
-            SELECT COUNT(*) as count FROM events WHERE bucket = 'human'
-        """).fetchone()["count"]
-
-        correlated_count = conn.execute("""
-            SELECT COUNT(*) as count FROM events WHERE correlated = 1
-        """).fetchone()["count"]
-
-        try:
-            node_status_records = conn.execute("""
-                SELECT * FROM node_status ORDER BY node ASC
-            """).fetchall()
-        except sqlite3.OperationalError:
-            node_status_records = []
-
-        try:
-            wazuh_logs = conn.execute("""
-                SELECT * FROM wazuh_alerts ORDER BY id DESC LIMIT 10
-            """).fetchall()
-        except sqlite3.OperationalError:
-            wazuh_logs = []
-
-    except sqlite3.OperationalError:
         events = []
         total_events = high_risk = auto_count = human_count = correlated_count = 0
         node_status_records = []
-        wazuh_logs = []
 
-    conn.close()
+        if _table_exists(conn, "events"):
+            events       = conn.execute("SELECT * FROM events ORDER BY id DESC LIMIT 20").fetchall()
+            total_events = conn.execute("SELECT COUNT(*) as count FROM events").fetchone()["count"]
+            high_risk    = conn.execute("""
+                SELECT COUNT(*) as count FROM events
+                WHERE bucket = 'quarantine' OR (bucket IS NULL AND risk_score >= 100)
+            """).fetchone()["count"]
+            auto_count   = conn.execute("SELECT COUNT(*) as count FROM events WHERE bucket = 'auto'").fetchone()["count"]
+            human_count  = conn.execute("SELECT COUNT(*) as count FROM events WHERE bucket = 'human'").fetchone()["count"]
+            correlated_count = conn.execute("SELECT COUNT(*) as count FROM events WHERE correlated = 1").fetchone()["count"]
 
-    return render_template(
-        "index.html",
-        events=events,
-        total_events=total_events,
-        high_risk=high_risk,
-        auto_count=auto_count,
-        human_count=human_count,
-        correlated_count=correlated_count,
-        nodes=node_status_records,
-        wazuh_logs=wazuh_logs,
-    )
+        if _table_exists(conn, "node_status"):
+            node_status_records = conn.execute("SELECT * FROM node_status ORDER BY node ASC").fetchall()
+    finally:
+        conn.close()
+
+    return render_template("index.html",
+        events=events, total_events=total_events, high_risk=high_risk,
+        auto_count=auto_count, human_count=human_count,
+        correlated_count=correlated_count, nodes=node_status_records)
 
 
 @app.route("/api/nodes")
 def api_nodes():
-    conn = get_db_connection()
+    conn = get_db()
     try:
-        nodes = conn.execute("SELECT * FROM node_status ORDER BY node ASC").fetchall()
-        result = [dict(row) for row in nodes]
-    except sqlite3.OperationalError:
+        if not _table_exists(conn, "node_status"):
+            return jsonify([])
+        return jsonify([dict(r) for r in conn.execute("SELECT * FROM node_status ORDER BY node ASC").fetchall()])
+    finally:
+        conn.close()
+
+
+@app.route("/api/nodes/identity")
+def api_node_identity():
+    conn = get_db()
+    try:
+        if not _table_exists(conn, "node_identity"):
+            return jsonify([])
+        return jsonify([dict(r) for r in conn.execute("SELECT * FROM node_identity ORDER BY node ASC").fetchall()])
+    finally:
+        conn.close()
+
+
+@app.route("/api/nodes/security")
+def api_node_security():
+    conn = get_db()
+    try:
+        if not _table_exists(conn, "node_status"):
+            return jsonify([])
+        rows = conn.execute("""
+            SELECT ns.node, ns.status, ns.risk_score, ns.last_updated,
+                COALESCE(ni.machine_id, '') as machine_id,
+                COALESCE(ni.trust_status, 'UNKNOWN') as trust_status,
+                COALESCE(ni.first_seen, '') as first_seen,
+                COALESCE((SELECT COUNT(*) FROM replay_log WHERE node = ns.node), 0) as replay_count,
+                COALESCE((SELECT COUNT(*) FROM security_alerts WHERE node_id = ns.node AND threat_type = 'FLOOD_ATTACK'), 0) as flood_count
+            FROM node_status ns
+            LEFT JOIN node_identity ni ON ni.node = ns.node
+            ORDER BY ns.node ASC
+        """).fetchall()
+        return jsonify([dict(r) for r in rows])
+    finally:
+        conn.close()
+
+
+@app.route("/api/alerts")
+def api_alerts():
+    try:
+        limit = min(int(request.args.get("limit", 50)), 200)
+    except (ValueError, TypeError):
+        limit = 50
+
+    severity    = request.args.get("severity", "").strip().upper() or None
+    node_id     = request.args.get("node_id", "").strip() or None
+    threat_type = request.args.get("threat_type", "").strip() or None
+
+    allowed_severities = {"INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"}
+    if severity and severity not in allowed_severities:
+        severity = None
+
+    conn = get_db()
+    try:
+        if not _table_exists(conn, "security_alerts"):
+            return jsonify([])
+        conditions, params = [], []
+        if severity:    conditions.append("severity = ?");    params.append(severity)
+        if node_id:     conditions.append("node_id = ?");     params.append(node_id)
+        if threat_type: conditions.append("threat_type = ?"); params.append(threat_type)
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        params.append(limit)
+        rows = conn.execute(
+            f"SELECT * FROM security_alerts {where} ORDER BY timestamp DESC LIMIT ?", params
+        ).fetchall()
         result = []
-    finally:
-        conn.close()
-    return jsonify(result)
-
-
-@app.route("/api/reset", methods=["POST"])
-def reset_demo():
-    conn = get_db_connection()
-
-    try:
-        # Clear dashboard/event data
-        conn.execute("DELETE FROM events")
-        conn.execute("DELETE FROM node_scores")
-        conn.execute("DELETE FROM node_status")
-
-        try:
-            conn.execute("DELETE FROM wazuh_alerts")
-        except sqlite3.OperationalError:
-            pass
-
-        # Reset risk-engine offset
-        try:
-            conn.execute("""
-                UPDATE engine_offset
-                SET last_committed = 0
-                WHERE id = 1
-            """)
-        except sqlite3.OperationalError:
-            pass
-
-        conn.commit()
-
-    except sqlite3.OperationalError as e:
-        return jsonify({"error": f"Database wipe failed: {e}"}), 500
-
-    finally:
-        conn.close()
-
-    # Reset controller offset file
-    try:
-
-        if os.path.exists("/data/controller.offset"):
-            os.remove("/data/controller.offset")
-
-    except Exception as e:
-        return jsonify({"error": f"Controller offset reset failed: {e}"}), 500
-
-    # Restart services
-    try:
-        client = docker.from_env()
-
-        containers_to_restart = [
-            "risk-engine",
-            "controller",
-            "wazuh",
-            "node1",
-            "node2",
-            "node3",
-            "node4",
-        ]
-
-        for c_name in containers_to_restart:
+        for r in rows:
+            row = dict(r)
             try:
-                container = client.containers.get(c_name)
-
-                try:
-                    container.restart()
-                except Exception:
-                    container.start()
-
-            except docker.errors.NotFound:
-                pass
-
-    except Exception as e:
-        return jsonify({"error": f"Docker restart failed: {e}"}), 500
-
-    return jsonify(
-        {
-            "success": True,
-            "message": (
-                "Demo reset complete. "
-                "Database cleared, offsets reset, "
-                "containers restarted."
-            ),
-        }
-    )
-
-
-@app.route("/api/nodes/<node_name>/restart", methods=["POST"])
-def restart_node(node_name):
-    conn = get_db_connection()
-    try:
-        # Wipe the node's cumulative score so it doesn't instantly quarantine again
-        conn.execute(
-            "UPDATE node_scores SET cumulative_score = 0.0 WHERE node = ?", (node_name,)
-        )
-
-        # Overwrite the node status to idle
-        ts = datetime.now(timezone.utc).isoformat()
-        conn.execute(
-            """
-            INSERT INTO node_status (node, status, risk_score, last_updated)
-            VALUES (?, 'idle', 0.0, ?)
-            ON CONFLICT(node) DO UPDATE SET
-                status = 'idle',
-                risk_score = 0.0,
-                last_updated = ?
-        """,
-            (node_name, ts, ts),
-        )
-        conn.commit()
-    except sqlite3.OperationalError as e:
-        return jsonify({"error": f"Database error: {e}"}), 500
+                row["evidence"] = json.loads(row.get("evidence", "{}"))
+            except (json.JSONDecodeError, TypeError):
+                row["evidence"] = {}
+            result.append(row)
+        return jsonify(result)
     finally:
         conn.close()
 
-    # Restart the actual container via Docker API
+
+@app.route("/api/alerts/stats")
+def api_alert_stats():
+    conn = get_db()
     try:
-        client = docker.from_env()
-        container = client.containers.get(node_name)
-        container.start()
-    except Exception as e:
-        return jsonify({"error": f"Docker error: {e}"}), 500
-
-    return jsonify({"success": True, "node": node_name})
-
-
-def approve_node_background(node_name):
-    for status_step in ['remediating_mock_slurm', 'remediating_mock_ansible', 'remediating_mock_openscap']:
-        conn = get_db_connection()
-        try:
-            ts = datetime.now(timezone.utc).isoformat()
-            conn.execute("UPDATE node_status SET status = ?, last_updated = ? WHERE node = ?", (status_step, ts, node_name))
-            conn.commit()
-        except Exception:
-            pass
-        finally:
-            conn.close()
-        time.sleep(2)
-        
-    conn = get_db_connection()
-    try:
-        conn.execute("UPDATE node_scores SET cumulative_score = 0.0 WHERE node = ?", (node_name,))
-        ts = datetime.now(timezone.utc).isoformat()
-        conn.execute("UPDATE node_status SET status = 'idle', risk_score = 0.0, last_updated = ? WHERE node = ?", (ts, node_name))
-        conn.commit()
-    except Exception:
-        pass
+        if not _table_exists(conn, "security_alerts"):
+            return jsonify({"total": 0, "by_type": {}, "by_severity": {}, "recent_24h": 0, "replay_total": 0})
+        rows = conn.execute("""
+            SELECT threat_type, severity, COUNT(*) as count
+            FROM security_alerts GROUP BY threat_type, severity
+        """).fetchall()
+        by_type, by_severity = {}, {}
+        for row in rows:
+            by_type[row["threat_type"]]   = by_type.get(row["threat_type"], 0) + row["count"]
+            by_severity[row["severity"]]  = by_severity.get(row["severity"], 0) + row["count"]
+        total      = conn.execute("SELECT COUNT(*) as c FROM security_alerts").fetchone()["c"]
+        recent_24h = conn.execute("SELECT COUNT(*) as c FROM security_alerts WHERE timestamp >= datetime('now', '-24 hours')").fetchone()["c"]
+        replay_total = 0
+        if _table_exists(conn, "replay_log"):
+            replay_total = conn.execute("SELECT COUNT(*) as c FROM replay_log").fetchone()["c"]
+        return jsonify({"total": total, "by_type": by_type, "by_severity": by_severity,
+                        "recent_24h": recent_24h, "replay_total": replay_total})
     finally:
         conn.close()
-        
-    try:
-        client = docker.from_env()
-        container = client.containers.get(node_name)
-        container.unpause()
-    except Exception as e:
-        print(f"Docker unpause error: {e}")
-
-@app.route("/api/nodes/<node_name>/approve", methods=["POST"])
-def approve_node(node_name):
-    threading.Thread(target=approve_node_background, args=(node_name,), daemon=True).start()
-    return jsonify({"success": True})
-
-@app.route("/api/nodes/<node_name>/details", methods=["GET"])
-def node_details(node_name):
-    conn = get_db_connection()
-    try:
-        events = conn.execute("""
-            SELECT timestamp, reasons, risk_score, matched_rules
-            FROM events
-            WHERE node = ? AND bucket IN ('human', 'auto', 'quarantine')
-            ORDER BY id DESC LIMIT 15
-        """, (node_name,)).fetchall()
-        result = [dict(row) for row in events]
-    except sqlite3.OperationalError:
-        result = []
-    finally:
-        conn.close()
-    return jsonify(result)
 
 
 if __name__ == "__main__":

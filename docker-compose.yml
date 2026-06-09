@@ -2,14 +2,20 @@ services:
   controller:
     build: ./controller
     container_name: controller
+    environment:
+      - HMAC_SECRET=${HMAC_SECRET}
+      - ALLOWLIST_PATH=/opt/security/config/allowlist.yaml
     volumes:
       - ./data:/data
+      - ./risk_engine/config:/opt/security/config:ro
     networks:
       - security_net
 
   risk-engine:
     build: ./risk_engine
     container_name: risk-engine
+    environment:
+      - ALLOWLIST_PATH=/opt/security/config/allowlist.yaml
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./data:/data
@@ -25,7 +31,6 @@ services:
     ports:
       - "5000:5000"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
       - ./data:/data
     depends_on:
       - risk-engine
@@ -37,6 +42,12 @@ services:
     container_name: node1
     environment:
       - NODE_NAME=node1
+      - HMAC_SECRET=${HMAC_SECRET}
+      - NODE_PEER_IPS=172.20.0.1,172.20.0.2,172.20.0.3,172.20.0.4
+      - PROCESS_POLICY_PATH=/opt/security/config/process_policy.yaml
+      - CONFIG_HASHES_PATH=/opt/security/config/config_hashes.yaml
+    volumes:
+      - ./risk_engine/config:/opt/security/config:ro
     depends_on:
       - controller
     networks:
@@ -47,6 +58,12 @@ services:
     container_name: node2
     environment:
       - NODE_NAME=node2
+      - HMAC_SECRET=${HMAC_SECRET}
+      - NODE_PEER_IPS=172.20.0.1,172.20.0.2,172.20.0.3,172.20.0.4
+      - PROCESS_POLICY_PATH=/opt/security/config/process_policy.yaml
+      - CONFIG_HASHES_PATH=/opt/security/config/config_hashes.yaml
+    volumes:
+      - ./risk_engine/config:/opt/security/config:ro
     depends_on:
       - controller
     networks:
@@ -57,6 +74,12 @@ services:
     container_name: node3
     environment:
       - NODE_NAME=node3
+      - HMAC_SECRET=${HMAC_SECRET}
+      - NODE_PEER_IPS=172.20.0.1,172.20.0.2,172.20.0.3,172.20.0.4
+      - PROCESS_POLICY_PATH=/opt/security/config/process_policy.yaml
+      - CONFIG_HASHES_PATH=/opt/security/config/config_hashes.yaml
+    volumes:
+      - ./risk_engine/config:/opt/security/config:ro
     depends_on:
       - controller
     networks:
@@ -67,6 +90,12 @@ services:
     container_name: node4
     environment:
       - NODE_NAME=node4
+      - HMAC_SECRET=${HMAC_SECRET}
+      - NODE_PEER_IPS=172.20.0.1,172.20.0.2,172.20.0.3,172.20.0.4
+      - PROCESS_POLICY_PATH=/opt/security/config/process_policy.yaml
+      - CONFIG_HASHES_PATH=/opt/security/config/config_hashes.yaml
+    volumes:
+      - ./risk_engine/config:/opt/security/config:ro
     depends_on:
       - controller
     networks:
@@ -75,8 +104,6 @@ services:
   wazuh:
     build: ./wazuh
     container_name: wazuh
-    volumes:
-      - ./data:/data
     networks:
       - security_net
 
