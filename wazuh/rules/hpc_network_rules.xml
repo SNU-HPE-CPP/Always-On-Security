@@ -1,0 +1,41 @@
+<group name="hpc_network, zeek, suricata,">
+  <rule id="110001" level="3">
+    <decoded_as>json</decoded_as>
+    <field name="log_type">suricata</field>
+    <field name="alert.signature">HPC slow port scan</field>
+    <description>Medium confidence port scan detected</description>
+    <group>network,scan,baseline_deviation</group>
+  </rule>
+
+  <rule id="110002" level="7">
+    <decoded_as>json</decoded_as>
+    <field name="log_type">suricata</field>
+    <field name="alert.signature">HPC fast port scan</field>
+    <description>High confidence port scan detected</description>
+    <group>network,scan,critical</group>
+  </rule>
+
+  <rule id="110003" level="10">
+    <decoded_as>json</decoded_as>
+    <field name="log_type">suricata</field>
+    <field name="alert.signature">Possible ICMP Tunnel - Large Payload</field>
+    <description>Possible covert ICMP tunnel detected</description>
+    <group>network,covert_channel,critical</group>
+  </rule>
+
+  <rule id="110004" level="8">
+    <decoded_as>json</decoded_as>
+    <field name="log_type">zeek_notice</field>
+    <field name="msg">Unauthorized container communication</field>
+    <description>Whitelisted container pair violation</description>
+    <group>network,unauthorized_comm,high</group>
+  </rule>
+
+  <rule id="110005" level="8">
+    <decoded_as>json</decoded_as>
+    <field name="log_type">zeek_notice</field>
+    <field name="msg">Lateral movement</field>
+    <description>Lateral movement or SSH hop chain detected</description>
+    <group>network,lateral_movement,high</group>
+  </rule>
+</group>

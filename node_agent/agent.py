@@ -449,6 +449,11 @@ def telemetry_monitor():
             for p in sec["unauthorized_procs"]:
                 reasons.append(f"Unauthorized process: {p['name']} (pid={p['pid']})")
 
+        if sec.get("network_threat"):
+            event_type = "SUSPICIOUS_ACTIVITY"
+            for anomaly in sec.get("network_anomalies", []):
+                reasons.append(f"Network threat: {anomaly}")
+
         # ---------------------------
         # BUILD EVENT
         # ---------------------------
@@ -470,6 +475,12 @@ def telemetry_monitor():
             "lateral_peers":      sec.get("lateral_peers", []),
             "peer_contact_count": sec.get("peer_contact_count", 0),
             "unauthorized_procs": sec.get("unauthorized_procs", []),
+            "network_threat": sec.get("network_threat", False),
+            "network_anomalies": sec.get("network_anomalies", []),
+            "unexpected_listeners": sec.get("unexpected_listeners", []),
+            "unexpected_egress": sec.get("unexpected_egress", []),
+            "remote_connection_count": sec.get("remote_connection_count", 0),
+            "remote_target_count": sec.get("remote_target_count", 0),
         }
 
         # ---------------------------

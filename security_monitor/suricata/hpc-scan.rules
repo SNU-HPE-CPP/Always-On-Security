@@ -1,0 +1,5 @@
+alert tcp any any -> any any (msg:"HPC fast port scan"; flags:S; flow:stateless; detection_filter:track by_src, count 15, seconds 30; sid:9000101; rev:1;)
+alert tcp any any -> any any (msg:"HPC slow port scan"; flags:S; flow:stateless; detection_filter:track by_src, count 40, seconds 600; sid:9000102; rev:1;)
+alert icmp any any -> any any (msg:"Possible ICMP Tunnel - Large Payload"; dsize:>64; sid:9000001; rev:1;)
+alert http any any -> any !80 (msg:"HTTP traffic on non-standard port"; flow:to_server,established; sid:9000002; rev:1;)
+alert ssh any any -> any !22 (msg:"SSH traffic on non-standard port"; flow:to_server,established; sid:9000003; rev:1;)

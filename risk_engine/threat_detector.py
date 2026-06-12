@@ -15,6 +15,7 @@ Detectors implemented:
   H. Unauthorized Process   — from security collector payload
   I. Lateral Movement       — SSH connections from security collector
   J. Config Tampering       — from security collector payload
+    K. Network Threat         — suspicious TCP egress/listeners from collector
 """
 
 import logging
@@ -94,6 +95,7 @@ class ThreatDetector:
         signals += self._detect_lateral_movement(node, event)
         signals += self._detect_config_tamper(node, event)
         signals += self._detect_unauth_process(node, event)
+        signals += self._detect_network_threat(node, event)
 
         return signals
 
@@ -255,6 +257,41 @@ class ThreatDetector:
             evidence    = {
                 "node":      node,
                 "processes": procs,
+            },
+        )]
+
+    # ── K: Network Threat ────────────────────────────────────────────
+
+    def _detect_network_threat(self, node: str, event: dict) -> list:
+        if not event.get("network_threat"):
+            return []
+
+        anomalies = event.get("network_anomalies", [])
+        if not anomalies:
+            return []
+
+        listeners = event.get("unexpected_listeners", [])
+        egress = event.get("unexpected_egress", [])
+        target_count = int(event.get("remote_target_count", 0))
+        conn_count = int(event.get("remote_connection_count", 0))
+
+        log.warning(f"[ENGINE] NETWORK_THREAT: {node} — {anomalies}")
+        return [ThreatSignal(
+            node_id     = node,
+            threat_type = "NETWORK_THREAT",
+            severity    = "HIGH",
+            description = (
+                f"Node {node} has suspicious network activity: "
+                f"{len(anomalies)} anomaly(s), {conn_count} TCP connection(s), "
+                f"{target_count} remote target(s)."
+            ),
+            evidence    = {
+                "node":                 node,
+                "anomalies":            anomalies,
+                "unexpected_listeners": listeners,
+                "unexpected_egress":    egress,
+                "remote_connection_count": conn_count,
+                "remote_target_count":   target_count,
             },
         )]
 

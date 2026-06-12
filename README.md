@@ -12,9 +12,9 @@ The system is built as a multi-container Docker application with the following l
 
 1. **Layer 1: Node Agents (`node_agent/`)** — Dual-threaded edge agents that collect system telemetry (CPU, memory, process count) while simulating workload states. Includes a built-in threat simulator for testing.
 2. **Layer 2: Event Bus & Durability (`controller/`)** — A lightweight message forwarder that receives telemetry via ZeroMQ, stamps events with a sequential offset, and persists state atomically for crash recovery.
-3. **Layer 3: Risk Engine (`risk_engine/`)** — A stateless Python microservice that assesses risk. Features context-aware threshold checks, risk decay (self-healing), cross-node correlation, and heartbeat monitoring.
+3. **Layer 3: Risk Engine (`risk_engine/`)** — A stateless Python microservice that assesses risk. Features context-aware threshold checks, risk decay (self-healing), cross-node correlation, heartbeat monitoring, and node-side network threat alerts.
 4. **Layer 4: Auto-Remediation (`risk_engine/router.py`)** — Monitors risk levels and routes decisions into buckets (silent, auto, human, quarantine). Initiates container-based node isolation via the Docker API.
-5. **Layer 5: Visibility & Alerting (`dashboard/` & `wazuh/`)** — A Flask-based web dashboard showing real-time statistics and node states, plus a simulated Wazuh SIEM manager receiving UDP alerts.
+5. **Layer 5: Visibility & Alerting (`dashboard/`, `wazuh/`, `security_monitor/`)** — A Flask-based web dashboard, a mock Wazuh SIEM manager, and a dedicated security monitor container running Suricata + Zeek on the Docker segments.
 
 ```
                 ┌──────────────────────────────────┐
@@ -31,7 +31,7 @@ The system is built as a multi-container Docker application with the following l
                 └───────────────▲──────────────────┘
                                 │ ZMQ :5555
                 ┌───────────────┴──────────────────┐
-                │          NODE AGENTS             │  ×4 (node1 to node4)
+                │          NODE AGENTS             │  ×4 (compute and storage nodes)
                 │  Telemetry & Threat Simulator    │
                 └──────────────────────────────────┘
 
@@ -39,6 +39,12 @@ The system is built as a multi-container Docker application with the following l
                 │   DASHBOARD   │  │     WAZUH     │
                 │ localhost:5000│  │ Mock SIEM :514│
                 └───────────────┘  └───────────────┘
+
+                ┌──────────────────────────────────┐
+                │ SECURITY MONITOR                 │
+                │ Suricata + Zeek + Filebeat       │
+                │ compute-net / storage-net / mgmt │
+                └──────────────────────────────────┘
 ```
 
 ---
@@ -61,6 +67,7 @@ The system is built as a multi-container Docker application with the following l
 | **High Memory** | Memory > 50% | `+20` risk points |
 | **Too Many Processes** | Process count > 300 | `+25` risk points |
 | **Suspicious Process** | Binary name match (e.g. `nmap`, `hydra`, `nc`, `stress`) | `+40` risk points |
+| **Network Threat** | Suspicious TCP egress, unexpected listeners, or high fan-out | `+55` risk points |
 
 ---
 
@@ -79,7 +86,24 @@ Currently, a node is marked as suspicious if it exhibits one or more of the foll
 * **Message Flooding**: Rate limits excessive telemetry from a single node.
 * **Config Tampering**: Hashes critical files (e.g. `/etc/hosts`) against a baseline.
 * **Lateral Movement**: Detects unexpected outbound SSH connections.
+* **Network Threat Detection**: Flags suspicious TCP egress, unexpected listening ports, and fan-out spikes that do not fit the cluster network profile.
 * **Telemetry Tampering**: Validates cryptographic HMAC-SHA256 signatures on all messages.
+
+## Network Simulation
+
+The Docker topology is split into three isolated segments:
+
+* `compute-net` for MPI-like east-west communication
+* `storage-net` for shared storage access
+* `mgmt-net` for control-plane and monitoring traffic
+
+The `security-monitor` container is attached to all three segments and is intended to inspect the Docker bridge/veth interfaces directly. Suricata handles scan and protocol-abuse detections, while Zeek handles whitelist violations, connection-graph tracking, and baseline deviation notices. Filebeat is configured to ship the generated logs into the SIEM pipeline.
+
+### Baseline and Detection Artifacts
+
+* `scripts/compute_baseline.py` reads Zeek conn logs and writes `baselines/baseline.json`
+* `scripts/beaconing_detector.py` reads conn logs and emits beaconing alerts to JSON
+* `scripts/enforce_segment_iptables.sh` applies host-side segment boundaries with iptables
 
 These detections are rule-based and serve as a proof-of-concept implementation.
 
@@ -101,15 +125,28 @@ Always-On-Security/
 │   └── templates/
 │       └── index.html
 │
+├── security_monitor/
+│   ├── Dockerfile
+│   ├── start.sh
+│   ├── filebeat.yml
+│   ├── suricata/
+│   └── zeek/
+│
 ├── node_agent/
 │   ├── agent.py
 │   ├── Dockerfile
 │   └── requirements.txt
 │
+├── scripts/
+│   ├── compute_baseline.py
+│   ├── beaconing_detector.py
+│   └── enforce_segment_iptables.sh
+│
 ├── wazuh/
 │   ├── wazuh.py
 │   └── Dockerfile
 │
+├── baselines/
 ├── data/                       # Shared SQLite Database
 │
 ├── docker-compose.yml
@@ -161,19 +198,20 @@ Before starting the system for the first time, you must generate the baseline co
 python3 generate_baseline.py
 ```
 
-Build and start all 9 services:
+Build and start all services:
 
 ```bash
 docker compose up --build -d
 ```
 
-The following containers will start inside the `security_net` bridge network:
+The following containers will start across the segmented Docker networks:
 
 * `controller`
 * `risk-engine`
 * `dashboard`
 * `node1`, `node2`, `node3`, `node4`
 * `wazuh`
+* `security-monitor`
 
 ---
 
@@ -220,6 +258,22 @@ This should trigger:
 * Dashboard updates
 * Node quarantine (when risk ≥ 100)
 * Wazuh alert (when node is quarantined)
+
+## Network Threat Tests
+
+The network monitor is designed for the Docker-only HPC simulation, so the easiest tests are container-to-container traffic patterns.
+
+* Port scan: run a simple port sweep from one container against another container's IP on `compute-net` or `storage-net`.
+* Unauthorized communication: send traffic from a compute container directly to the management segment.
+* Lateral movement: SSH from one node to another, then chain into a third node.
+* Beaconing: generate repeated low-byte, fixed-interval connections between the same pair of containers.
+* ICMP tunnel / protocol abuse: send large ICMP payloads or mismatched protocol traffic through Suricata-monitored paths.
+
+Expected outputs:
+
+* Suricata EVE JSON notice for port scans and ICMP tunnel patterns
+* Zeek notice for unauthorized pairs, fan-out, hop chains, and protocol mismatches
+* Python baseline JSON in `baselines/`
 
 Stop the process:
 

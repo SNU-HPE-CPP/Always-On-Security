@@ -29,3 +29,15 @@ heartbeat_timeout_seconds:
   node2: 30
   node3: 30
   node4: 30
+
+# Cluster network detection defaults used by the node-side network collector.
+network_detection:
+  cluster_cidr: 172.20.0.0/16
+  allowed_remote_ports:
+    - 22
+    - 514
+    - 5555
+    - 5556
+  allowed_listen_ports:
+    - 5556
+  max_remote_targets: 8
