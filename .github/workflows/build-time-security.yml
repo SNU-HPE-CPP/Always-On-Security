@@ -1,0 +1,111 @@
+name: Build-Time Security
+
+on:
+  push:
+    branches:
+      - main
+      - "feature/**"
+      - develop
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  secret-detection:
+    name: Secret Detection (GitLeaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+
+  yaml-validation:
+    name: YAML Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "stub" # B will add the yamllint + PyYAML steps
+
+  sast-bandit:
+    name: Bandit SAST
+    runs-on: ubuntu-latest
+    needs: [secret-detection, yaml-validation]
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "stub"
+
+  sast-semgrep:
+    name: Semgrep SAST
+    runs-on: ubuntu-latest
+    needs: [secret-detection, yaml-validation]
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "stub"
+
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    needs: [secret-detection, yaml-validation]
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "stub"
+
+  sca-pip-audit:
+    name: pip-audit SCA
+    runs-on: ubuntu-latest
+    needs: [secret-detection, yaml-validation]
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "stub"
+
+  hadolint:
+    name: Hadolint
+    runs-on: ubuntu-latest
+    needs: [secret-detection, yaml-validation]
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "stub"
+
+  checkov:
+    name: Checkov IaC Scan
+    runs-on: ubuntu-latest
+    needs: [secret-detection, yaml-validation]
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "stub"
+
+  trivy:
+    name: Trivy CVE Scan
+    runs-on: ubuntu-latest
+    needs: [secret-detection, yaml-validation]
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "stub"
+
+  security-gate:
+    name: Security Gate
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - secret-detection
+      - yaml-validation
+      - sast-bandit
+      - sast-semgrep
+      - shellcheck
+      - sca-pip-audit
+      - hadolint
+      - checkov
+      - trivy
+    steps:
+      - run: echo "stub gate"
