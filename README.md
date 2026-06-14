@@ -351,3 +351,71 @@ The core monitoring architecture has been significantly hardened to simulate an 
 
 * **5. Dark-Mode Security Dashboard (`dashboard/templates/index.html`)**
   The UI was completely overhauled into a modern, dark-mode security operations center (SOC). It features live-updating SVG threat distribution charts, node trust badges (TRUSTED vs ROGUE), protocol integrity counters, and an XSS-safe dynamic alert feed.
+
+---
+
+## Build-Time Security (CI/CD Pipeline)
+
+Layer 1 of the Always-On Security architecture — shift-left enforcement before any code reaches production.
+
+### What Was Added
+
+| File | Purpose |
+|------|---------|
+| `.github/workflows/build-time-security.yml` | 10-job security pipeline triggered on every push and PR |
+| `.github/workflows/sbom.yml` | SBOM generation on every merge to `main` |
+| `.gitleaks.toml` | Secret detection allowlist (HMAC variable refs, FIM integrity hashes) |
+| `.yamllint.yml` | YAML linting config for `risk_engine/config/` and `docker-compose.yml` |
+| `.checkov.yaml` | IaC skip list for intentional privileged/socket findings |
+| `node_agent/requirements.txt` | Pinned dependencies (was inline in Dockerfile) |
+| `*/`.dockerignore` (×6)` | Excludes `.env`, `data/`, `__pycache__/` from all build contexts |
+
+### Pipeline Stages
+
+```
+Push / PR
+    │
+    ├── Stage 1 (blocking, serial)
+    │   ├── secret-detection   GitLeaks — full git history scan
+    │   └── yaml-validation    yamllint + PyYAML safe_load on all configs
+    │
+    ├── Stage 2 (blocking, parallel)
+    │   ├── sast-bandit        Python SAST — blocks on HIGH severity
+    │   ├── sast-semgrep       p/python + p/secrets + p/owasp-top-ten
+    │   └── shellcheck         Shell script linting (advisory)
+    │
+    ├── Stage 3 (blocking, parallel)
+    │   └── sca-pip-audit      CVE scan on all requirements.txt files
+    │
+    ├── Stage 4 (advisory, parallel)
+    │   ├── hadolint           Dockerfile best-practice linting
+    │   ├── checkov            docker-compose.yml IaC scan
+    │   └── trivy              Filesystem CVE scan (blocks on CRITICAL)
+    │
+    └── Security Gate          Final pass/fail verdict for branch protection
+```
+
+### Codebase Fixes (Person B track)
+
+- **Dependency pinning** — all `requirements.txt` files pinned to exact versions; `pip-audit` reports zero CVEs
+- **`# nosec B108/B103`** — suppressed on intentional `/tmp` fallback path and attack simulator `chmod` with justification comments
+- **`# nosemgrep`** — suppressed on Flask `0.0.0.0` binding, mock SIEM `socket.bind`, and attack simulator `chmod`; all with exact rule IDs
+- **`.dockerignore`** — added to all 6 service directories; `.env` can no longer be accidentally included in a Docker image layer
+
+### Compliance Mapping
+
+| Check | NIST SP 800-234 | CIS Controls |
+|-------|----------------|--------------|
+| GitLeaks | SC-12, SC-13 | CIS 3.11, 4.1 |
+| YAML validation | CM-2, CM-6 | CIS 4.1 |
+| Bandit / Semgrep | SA-11, SI-7 | CIS 16.1, 16.4 |
+| pip-audit | SA-12, SI-2 | CIS 2.2, 7.3 |
+| Trivy | RA-5, SI-2 | CIS 7.1, 7.3 |
+| SBOM (Syft) | SA-12 | CIS 2.1 |
+
+### Known Gaps (Tracked as Issues)
+
+- HMAC\_SECRET passed as plain env var — should migrate to Docker secrets (REC-11)
+- Docker base images use floating tags (`python:3.11-slim`) — should pin to digest (DL3007)
+- No non-root `USER` instruction in Dockerfiles — containers run as root (DL3002)
+- No `HEALTHCHECK` in any Dockerfile (CKV\_DOCKER\_2)
