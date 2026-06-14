@@ -1,0 +1,22 @@
+title = "Always-On Security GitLeaks Config"
+
+[allowlist]
+  description = "Allowlist for variable references and integrity hashes that are not secrets"
+
+  # .env contains the real HMAC_SECRET but is gitignored — never committed.
+  # config_hashes.yaml contains SHA-256 hashes of /etc/passwd and /etc/hosts
+  # for FIM integrity checking, not actual credentials.
+  paths = [
+    ".env",
+    ".env.example",
+    "risk_engine/config/config_hashes.yaml",
+  ]
+
+  regexes = [
+    # ${HMAC_SECRET} in docker-compose.yml — variable reference, not a value
+    '''\$\{HMAC_SECRET\}''',
+    # $HMAC_SECRET in shell scripts — variable expansion, not a value
+    '''\$HMAC_SECRET''',
+    # HMAC_SECRET= followed by $ means it's reading from another var, not embedding a literal
+    '''HMAC_SECRET=\$''',
+  ]
