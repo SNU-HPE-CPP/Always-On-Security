@@ -302,7 +302,7 @@ def telemetry_monitor():
 
                 # SIMULATE PERMISSION CHANGE on /etc/passwd
                 try:
-                    os.chmod('/etc/passwd', 0o777)
+                    os.chmod('/etc/passwd', 0o777)  # nosec B103 # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions — intentional attack simulator: triggers permission-change detection rules
                     print(f"[{NODE_NAME}] [SIMULATOR] Changed /etc/passwd permissions to 0777")
                 except Exception as e:
                     print(f"[{NODE_NAME}] [SIMULATOR] Failed to chmod /etc/passwd: {e}")

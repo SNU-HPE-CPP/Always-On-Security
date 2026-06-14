@@ -1,0 +1,7 @@
+.env
+data/
+baselines/
+__pycache__/
+*.pyc
+*.pyo
+.git/

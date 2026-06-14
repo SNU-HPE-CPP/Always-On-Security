@@ -1,0 +1,12 @@
+soft-fail: false
+
+skip-check:
+  - CKV2_DOCKER_2   # security-monitor: privileged required for Suricata/Zeek packet capture
+  - CKV_DOCKER_13   # security-monitor: NET_ADMIN/NET_RAW required for network monitoring
+  - CKV_DC_1        # risk-engine: Docker socket required for container quarantine (docker stop)
+  - CKV_SECRET_6    # config_hashes.yaml: SHA-256 hashes of /etc/passwd and /etc/hosts for FIM — not credentials
+
+# Real findings intentionally NOT suppressed (tracked as GitHub Issues):
+#   CKV_DOCKER_2  — missing HEALTHCHECK in all Dockerfiles
+#   CKV_DOCKER_3  — containers run as root (no USER instruction)
+#   HMAC_SECRET in env vars — convert to Docker secrets (REC-11)

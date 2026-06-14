@@ -1,0 +1,4 @@
+psutil==7.2.2
+pyzmq==27.1.0
+inotify-simple==2.0.1
+PyYAML==6.0.3

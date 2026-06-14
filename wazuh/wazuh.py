@@ -6,7 +6,7 @@ from datetime import datetime
 HOST = "0.0.0.0"
 PORT = 514
 
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)  # nosemgrep: python.lang.security.audit.network.bind.avoid-bind-to-all-interfaces — intentional: mock SIEM must receive syslog from all containers
 sock.bind((HOST, PORT))
 
 DB_PATH = "/data/events.db"

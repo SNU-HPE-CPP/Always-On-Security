@@ -1,0 +1,369 @@
+name: Build-Time Security
+
+on:
+  push:
+    branches:
+      - main
+      - "feature/**"
+      - develop
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  secret-detection:
+    name: Secret Detection (GitLeaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Install GitLeaks
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz | tar -xz
+          sudo mv gitleaks /usr/local/bin/
+
+      - name: Run GitLeaks
+        run: gitleaks detect --source . --config .gitleaks.toml
+
+  yaml-validation:
+    name: YAML Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install yamllint
+        run: pip install yamllint --break-system-packages
+
+      - name: Lint YAML files
+        run: yamllint -c .yamllint.yml risk_engine/config/ docker-compose.yml
+
+      - name: PyYAML parse check
+        run: |
+          python3 -c "
+          import yaml, sys, glob
+          files = glob.glob('risk_engine/config/*.yaml')
+          if not files:
+              print('WARNING: no YAML files found in risk_engine/config/')
+              sys.exit(0)
+          failed = False
+          for f in files:
+              try:
+                  yaml.safe_load(open(f))
+                  print(f'OK: {f}')
+              except Exception as e:
+                  print(f'FAIL: {f}: {e}')
+                  failed = True
+          sys.exit(1 if failed else 0)
+          "
+
+  sast-bandit:
+    name: Bandit SAST
+    runs-on: ubuntu-latest
+    needs: [secret-detection, yaml-validation]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Bandit
+        run: pip install "bandit[sarif]>=1.7.5" --break-system-packages
+
+      - name: Run Bandit
+        run: |
+          bandit -r . \
+            --exclude .git,baselines,data,security_monitor \
+            --confidence-level medium \
+            --format sarif \
+            --output bandit-results.sarif \
+            || true
+
+      - name: Upload SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: bandit-results.sarif
+          category: bandit
+
+      - name: Fail if HIGH severity findings exist
+        run: |
+          python3 -c "
+          import json, sys
+          with open('bandit-results.sarif') as f:
+              sarif = json.load(f)
+          high_findings = []
+          for run in sarif.get('runs', []):
+              rules = {r['id']: r for r in run.get('tool', {}).get('driver', {}).get('rules', [])}
+              for result in run.get('results', []):
+                  rule_id = result.get('ruleId', '')
+                  rule = rules.get(rule_id, {})
+                  severity = rule.get('properties', {}).get('tags', [])
+                  if 'HIGH' in severity or result.get('level') == 'error':
+                      high_findings.append(rule_id)
+          if high_findings:
+              print(f'BLOCKING: {len(high_findings)} HIGH severity Bandit finding(s): {high_findings}')
+              sys.exit(1)
+          else:
+              print('OK: No HIGH severity Bandit findings')
+          "
+
+  sast-semgrep:
+    name: Semgrep SAST
+    runs-on: ubuntu-latest
+    needs: [secret-detection, yaml-validation]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Semgrep
+        run: pip install semgrep --break-system-packages
+
+      - name: Run Semgrep (p/secrets)
+        run: |
+          semgrep --config p/secrets \
+            --sarif \
+            --output semgrep-secrets.sarif \
+            --exclude baselines/ --exclude data/ --exclude security_monitor/ \
+            . || true
+
+      - name: Run Semgrep (p/python + p/owasp-top-ten)
+        run: |
+          semgrep --config p/python --config p/owasp-top-ten \
+            --sarif \
+            --output semgrep-code.sarif \
+            --exclude baselines/ --exclude data/ --exclude security_monitor/ \
+            . || true
+
+      - name: Upload secrets SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep-secrets.sarif
+          category: semgrep-secrets
+
+      - name: Upload code SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep-code.sarif
+          category: semgrep-code
+
+      - name: Fail if ERROR level findings exist
+        run: |
+          python3 -c "
+          import json, sys
+          error_findings = []
+          for sarif_file in ['semgrep-secrets.sarif', 'semgrep-code.sarif']:
+              with open(sarif_file) as f:
+                  sarif = json.load(f)
+              for run in sarif.get('runs', []):
+                  for result in run.get('results', []):
+                      if result.get('level') == 'error':
+                          error_findings.append(result.get('ruleId', 'unknown'))
+          if error_findings:
+              print(f'BLOCKING: {len(error_findings)} ERROR level Semgrep finding(s): {error_findings}')
+              sys.exit(1)
+          else:
+              print('OK: No ERROR level Semgrep findings')
+          "
+
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    needs: [secret-detection, yaml-validation]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: sudo apt-get install -y shellcheck
+
+      - name: Run ShellCheck (advisory only)
+        run: |
+          find . -name "*.sh" \
+            -not -path "./.git/*" \
+            -not -path "./baselines/*" \
+            -not -path "./data/*" \
+            | xargs shellcheck --severity=warning || true
+
+  sca-pip-audit:
+    name: pip-audit SCA
+    runs-on: ubuntu-latest
+    needs: [secret-detection, yaml-validation]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pip-audit
+        run: pip install pip-audit --break-system-packages
+
+      - name: Audit dashboard dependencies
+        run: pip-audit -r dashboard/requirements.txt --output pip-audit-dashboard.json --format json || true
+
+      - name: Audit node_agent dependencies
+        run: pip-audit -r node_agent/requirements.txt --output pip-audit-node.json --format json || true
+
+      - name: Fail if any CVEs found
+        run: |
+          python3 -c "
+          import json, sys, os
+          found_vulns = []
+          for audit_file in ['pip-audit-dashboard.json', 'pip-audit-node.json']:
+              if not os.path.exists(audit_file):
+                  print(f'WARNING: {audit_file} not found — skipping')
+                  continue
+              with open(audit_file) as f:
+                  data = json.load(f)
+              for dep in data.get('dependencies', []):
+                  for vuln in dep.get('vulns', []):
+                      found_vulns.append(f\"{dep['name']}=={dep['version']}: {vuln['id']} ({vuln.get('fix_versions', 'no fix')})\")
+          if found_vulns:
+              print(f'BLOCKING: {len(found_vulns)} CVE(s) found:')
+              for v in found_vulns:
+                  print(f'  - {v}')
+              sys.exit(1)
+          else:
+              print('OK: Zero CVEs found across all requirements files')
+          "
+
+  hadolint:
+    name: Hadolint
+    runs-on: ubuntu-latest
+    needs: [secret-detection, yaml-validation]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Hadolint
+        run: |
+          wget -qO /usr/local/bin/hadolint \
+            https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64
+          chmod +x /usr/local/bin/hadolint
+
+      - name: Run Hadolint on all Dockerfiles (advisory only)
+        run: |
+          find . -name "Dockerfile" -not -path "./.git/*" | while read df; do
+            echo "--- Checking $df ---"
+            hadolint "$df" || true
+          done
+          # Advisory only — DL3007/DL3002 findings expected; tracked as GitHub Issues
+
+  checkov:
+    name: Checkov IaC Scan
+    runs-on: ubuntu-latest
+    needs: [secret-detection, yaml-validation]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Checkov
+        run: pip install checkov --break-system-packages
+
+      - name: Run Checkov on docker-compose.yml (advisory only)
+        run: |
+          checkov -f docker-compose.yml \
+            --config-file .checkov.yaml \
+            --output sarif \
+            --output-file checkov-results.sarif \
+            || true
+
+      - name: Upload Checkov SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: checkov-results.sarif
+          category: checkov
+
+  trivy:
+    name: Trivy CVE Scan
+    runs-on: ubuntu-latest
+    needs: [secret-detection, yaml-validation]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Trivy
+        run: |
+          wget -qO- https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Run Trivy filesystem scan
+        run: |
+          trivy fs . \
+            --severity CRITICAL,HIGH \
+            --format sarif \
+            --output trivy-results.sarif \
+            --exit-code 0 \
+            --ignore-unfixed
+
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy
+
+      - name: Fail if CRITICAL CVEs found
+        run: |
+          trivy fs . \
+            --severity CRITICAL \
+            --exit-code 1 \
+            --ignore-unfixed \
+            --quiet
+          # HIGH CVEs go to Security tab but are advisory only
+
+  security-gate:
+    name: Security Gate
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - secret-detection
+      - yaml-validation
+      - sast-bandit
+      - sast-semgrep
+      - shellcheck
+      - sca-pip-audit
+      - hadolint
+      - checkov
+      - trivy
+    steps:
+      - name: Evaluate blocking jobs
+        run: |
+          python3 -c "
+          import sys
+
+          # Job results passed in via environment — GitHub sets these automatically
+          # via needs context. We check each BLOCKING job explicitly.
+          blocking_jobs = {
+              'secret-detection':  '${{ needs.secret-detection.result }}',
+              'yaml-validation':   '${{ needs.yaml-validation.result }}',
+              'sast-bandit':       '${{ needs.sast-bandit.result }}',
+              'sast-semgrep':      '${{ needs.sast-semgrep.result }}',
+              'sca-pip-audit':     '${{ needs.sca-pip-audit.result }}',
+              'trivy':             '${{ needs.trivy.result }}',
+          }
+
+          advisory_jobs = {
+              'shellcheck':        '${{ needs.shellcheck.result }}',
+              'hadolint':          '${{ needs.hadolint.result }}',
+              'checkov':           '${{ needs.checkov.result }}',
+          }
+
+          failed_blocking = [job for job, result in blocking_jobs.items() if result != 'success']
+          failed_advisory = [job for job, result in advisory_jobs.items() if result not in ('success', 'failure')]
+
+          print('=== SECURITY GATE REPORT ===')
+          print()
+          print('BLOCKING jobs:')
+          for job, result in blocking_jobs.items():
+              icon = '✓' if result == 'success' else '✗'
+              print(f'  {icon} {job}: {result}')
+
+          print()
+          print('ADVISORY jobs:')
+          for job, result in advisory_jobs.items():
+              print(f'  - {job}: {result}')
+
+          print()
+          if failed_blocking:
+              print(f'GATE FAILED — {len(failed_blocking)} blocking job(s) did not pass: {failed_blocking}')
+              sys.exit(1)
+          else:
+              print('GATE PASSED — all blocking jobs succeeded')
+          "
