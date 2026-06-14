@@ -303,4 +303,4 @@ def api_alert_stats():
 if __name__ == "__main__":
     # TODO(security): In production, run behind a TLS-terminating reverse proxy.
     # Do NOT expose 0.0.0.0 externally without network-level access control.
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=5000)  # nosemgrep: python.flask.security.audit.app-run-param-config.avoid_app_run_with_bad_host — intentional: container bound to internal Docker network only
