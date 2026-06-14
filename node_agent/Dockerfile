@@ -2,8 +2,9 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY . .
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-RUN pip install --no-cache-dir psutil pyzmq inotify-simple pyyaml
+COPY agent.py security_collector.py secure_messenger.py fim_config.yaml ./
 
 CMD ["python", "agent.py"]
