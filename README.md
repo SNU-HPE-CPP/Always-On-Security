@@ -303,6 +303,25 @@ docker run --rm --network always-on-security_security_net \
 **3. Telemetry Tampering / Replay Attacks**
 Since all messages are cryptographically signed with HMAC-SHA256, sending raw JSON via `netcat` will be rejected by the Controller. To test `REPLAY_ATTACK` or `TELEMETRY_TAMPER`, you must extract the `HMAC_SECRET` from `.env` and write a custom python script using `pyzmq` to sign and send duplicate `msg_id`s or modify payloads post-signing.
 
+**4. Pre-Flight Config Integrity Block (REC-08)**
+The system will now actively refuse to start if its critical configuration files have been maliciously modified or corrupted. To test this:
+1. Make a subtle modification to a central config file on the host:
+   ```bash
+   echo "# Tampered" >> risk_engine/config/rules.yaml
+   ```
+2. Restart the risk-engine service:
+   ```bash
+   docker compose restart risk-engine
+   ```
+3. Watch the startup logs—you will see a large red error, and the container will immediately exit with code 2 rather than starting:
+   ```bash
+   docker compose logs risk-engine
+   ```
+4. Revert the file and restart to bring the service back up:
+   ```bash
+   git checkout risk_engine/config/rules.yaml
+   docker compose restart risk-engine
+   ```
 ---
 
 ## Useful Commands
@@ -351,6 +370,11 @@ The core monitoring architecture has been significantly hardened to simulate an 
 
 * **5. Dark-Mode Security Dashboard (`dashboard/templates/index.html`)**
   The UI was completely overhauled into a modern, dark-mode security operations center (SOC). It features live-updating SVG threat distribution charts, node trust badges (TRUSTED vs ROGUE), protocol integrity counters, and an XSS-safe dynamic alert feed.
+
+* **6. Pre-flight Config Integrity Check (`scripts/check_config_integrity.py` & `scripts/entrypoint.sh`)**
+  Enforces NIST CM-2 / CM-6 / SI-7. A strict startup check added to `risk-engine` and `controller` verifies all service YAML configurations (`rules.yaml`, `allowlist.yaml`, etc.) against a trusted SHA-256 baseline (`config_hashes.yaml`). 
+  * If a file has been tampered with, the `entrypoint.sh` wrapper intercepts the startup, prints a detailed error to stdout, and exits with code 2. This prevents the system from ever operating with blinded detection rules or a modified allowlist.
+  * Every startup check writes a machine-readable JSON audit record to a persistent `/data/integrity_audits` volume for forensics.
 
 ---
 
