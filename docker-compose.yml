@@ -1,25 +1,45 @@
 services:
   controller:
-    build: ./controller
+    build:
+      context: .
+      dockerfile: controller/Dockerfile
     container_name: controller
     environment:
       - HMAC_SECRET=${HMAC_SECRET}
       - ALLOWLIST_PATH=/opt/security/config/allowlist.yaml
+      # ── REC-08: Pre-flight integrity check ──────────────────────────
+      - SERVICE_NAME=controller
+      - CONFIG_HASHES_PATH=/opt/security/config/config_hashes.yaml
+      - CONFIG_DIR=/opt/security/config
+      - INTEGRITY_AUDIT_DIR=/data/integrity_audits
+      - INTEGRITY_ALLOW_MISSING_MANIFEST=${INTEGRITY_ALLOW_MISSING_MANIFEST:-true}
+      - INTEGRITY_STRICT=${INTEGRITY_STRICT:-false}
     volumes:
       - shared_data:/data
+      - integrity_audits:/data/integrity_audits
       - ./risk_engine/config:/opt/security/config:ro
     networks:
       mgmt-net:
         ipv4_address: 10.10.3.10
 
   risk-engine:
-    build: ./risk_engine
+    build:
+      context: .
+      dockerfile: risk_engine/Dockerfile
     container_name: risk-engine
     environment:
       - ALLOWLIST_PATH=/opt/security/config/allowlist.yaml
+      # ── REC-08: Pre-flight integrity check ──────────────────────────
+      - SERVICE_NAME=risk-engine
+      - CONFIG_HASHES_PATH=/opt/security/config/config_hashes.yaml
+      - CONFIG_DIR=/opt/security/config
+      - INTEGRITY_AUDIT_DIR=/data/integrity_audits
+      - INTEGRITY_ALLOW_MISSING_MANIFEST=${INTEGRITY_ALLOW_MISSING_MANIFEST:-true}
+      - INTEGRITY_STRICT=${INTEGRITY_STRICT:-false}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - shared_data:/data
+      - integrity_audits:/data/integrity_audits
       - ./risk_engine/config:/opt/security/config:ro
     depends_on:
       - controller
@@ -182,3 +202,7 @@ networks:
 
 volumes:
   shared_data:
+  # ── REC-08: Persistent integrity audit records ──────────────────────────
+  # Stores JSON audit records from every pre-flight check run.
+  # Mount this volume or copy files out to retain evidence across rebuilds.
+  integrity_audits:

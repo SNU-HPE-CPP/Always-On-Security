@@ -1,15 +1,28 @@
 #!/usr/bin/env python3
 """
 generate_baseline.py — Config File Baseline Hash Generator
+NIST SP 800-234: CM-2 (Baseline Configuration), SI-7 (Software Integrity)
 
-Run this script ONCE from a known-good node state to capture
-the SHA-256 hashes of monitored configuration files.
+Run this script ONCE from a known-good state to capture SHA-256 hashes of:
+  (a) Monitored host-level config files  (e.g. /etc/hosts, /etc/passwd)
+  (b) Service-level YAML config files    (e.g. rules.yaml, allowlist.yaml)
 
 Output is written to: risk_engine/config/config_hashes.yaml
+This manifest is consumed at startup by check_config_integrity.py (REC-08)
+and at runtime by security_collector.py (REC-02 auto-restore).
 
 Usage:
-    python3 generate_baseline.py [--files /etc/hosts,/etc/passwd,/etc/sudoers]
-    python3 generate_baseline.py --out ./risk_engine/config/config_hashes.yaml
+    # Hash host files only (original behaviour)
+    python3 generate_baseline.py --files /etc/hosts,/etc/passwd
+
+    # Hash YAML service configs from a config directory
+    python3 generate_baseline.py --config-dir ./risk_engine/config
+
+    # Hash both
+    python3 generate_baseline.py \\
+        --files /etc/hosts,/etc/passwd \\
+        --config-dir ./risk_engine/config \\
+        --out ./risk_engine/config/config_hashes.yaml
 """
 
 import argparse
@@ -19,8 +32,19 @@ from pathlib import Path
 
 import yaml
 
+# ── Host-level files monitored by the node agent (REC-02) ────────────────────
 DEFAULT_FILES = ["/etc/hosts", "/etc/passwd", "/etc/sudoers"]
-DEFAULT_OUT   = "./risk_engine/config/config_hashes.yaml"
+
+# ── Service-level YAML configs verified at startup (REC-08) ──────────────────
+SERVICE_CONFIG_FILES = [
+    "rules.yaml",
+    "allowlist.yaml",
+    "process_policy.yaml",
+    "thresholds.yaml",
+    "node_criticality.yaml",
+]
+
+DEFAULT_OUT = "./risk_engine/config/config_hashes.yaml"
 
 
 def sha256_file(path: str) -> str | None:
@@ -36,51 +60,110 @@ def sha256_file(path: str) -> str | None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate config file baseline hashes.")
+    parser = argparse.ArgumentParser(
+        description="Generate SHA-256 baseline hashes for config integrity checks (REC-02 / REC-08)."
+    )
     parser.add_argument(
         "--files",
-        default=",".join(DEFAULT_FILES),
-        help="Comma-separated list of files to hash.",
+        default="",
+        help=(
+            "Comma-separated list of host-level files to hash "
+            f"(default: {','.join(DEFAULT_FILES)} when --config-dir is not set)."
+        ),
+    )
+    parser.add_argument(
+        "--config-dir",
+        default="",
+        help=(
+            "Directory containing service YAML config files to hash "
+            f"({', '.join(SERVICE_CONFIG_FILES)}). "
+            "Use ./risk_engine/config for the standard layout."
+        ),
+    )
+    parser.add_argument(
+        "--service-files",
+        default=",".join(SERVICE_CONFIG_FILES),
+        help=(
+            "Comma-separated list of YAML filenames inside --config-dir to hash. "
+            f"Default: {','.join(SERVICE_CONFIG_FILES)}"
+        ),
     )
     parser.add_argument(
         "--out",
         default=DEFAULT_OUT,
-        help="Output YAML path.",
+        help=f"Output YAML path. Default: {DEFAULT_OUT}",
     )
     args = parser.parse_args()
 
-    files  = [f.strip() for f in args.files.split(",") if f.strip()]
-    hashes = {}
+    # ── Build list of files to hash ───────────────────────────────────────────
+    all_files: list[str] = []
 
-    print(f"Computing baseline hashes for {len(files)} file(s)...")
-    for fpath in files:
+    # Host-level files (absolute paths stored as-is)
+    if args.files:
+        host_files = [f.strip() for f in args.files.split(",") if f.strip()]
+    elif not args.config_dir:
+        # Fall back to defaults only when no --config-dir is given
+        host_files = list(DEFAULT_FILES)
+    else:
+        host_files = []
+    all_files.extend(host_files)
+
+    # Service YAML configs (stored as bare filenames so they resolve
+    # against whatever --config-dir is used at runtime)
+    if args.config_dir:
+        config_dir = Path(args.config_dir)
+        svc_files = [f.strip() for f in args.service_files.split(",") if f.strip()]
+        for fname in svc_files:
+            full = config_dir / fname
+            all_files.append(str(full))   # absolute path → easy lookup in manifest
+
+    if not all_files:
+        print("[ERROR] No files to hash. Provide --files or --config-dir.", file=sys.stderr)
+        sys.exit(1)
+
+    # ── Compute hashes ────────────────────────────────────────────────────────
+    hashes: dict[str, str] = {}
+    print(f"Computing baseline hashes for {len(all_files)} file(s)...")
+    for fpath in all_files:
         digest = sha256_file(fpath)
         if digest:
             hashes[fpath] = digest
-            print(f"  OK  {fpath}: {digest[:16]}...")
+            print(f"  OK   {fpath}: {digest[:16]}...")
         else:
-            print(f"  SKIP {fpath} (unreadable)")
+            print(f"  SKIP {fpath} (unreadable — skipped)")
 
+    if not hashes:
+        print("[ERROR] No files could be hashed. Check paths and permissions.", file=sys.stderr)
+        sys.exit(1)
+
+    # ── Write output ──────────────────────────────────────────────────────────
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     header = (
-        "# Baseline SHA-256 hashes of monitored configuration files.\n"
-        "# Generated by generate_baseline.py — DO NOT edit manually.\n"
-        f"# Files: {', '.join(files)}\n"
+        "# Baseline SHA-256 hashes — generated by generate_baseline.py\n"
+        "# NIST CM-2 / SI-7 — DO NOT edit manually.\n"
         "#\n"
-        "# Regenerate from a known-good node with:\n"
-        "#   python3 generate_baseline.py\n\n"
+        "# Used by:\n"
+        "#   check_config_integrity.py  (REC-08 — pre-flight startup check)\n"
+        "#   security_collector.py      (REC-02 — runtime tamper + auto-restore)\n"
+        "#\n"
+        "# Regenerate from a known-good state with:\n"
+        "#   python3 generate_baseline.py --config-dir ./risk_engine/config\n"
+        "#\n\n"
     )
 
     with open(out_path, "w") as f:
         f.write(header)
-        yaml.dump(hashes, f, default_flow_style=False)
+        yaml.dump(hashes, f, default_flow_style=False, allow_unicode=True)
 
-    print(f"\nBaseline written to: {out_path}")
-    print(f"Total files hashed: {len(hashes)}")
+    print(f"\nBaseline written to : {out_path}")
+    print(f"Total files hashed  : {len(hashes)}")
+    print("\nNext steps:")
+    print("  1. Commit this file to version control (it is the trust anchor).")
+    print("  2. Set INTEGRITY_ALLOW_MISSING_MANIFEST=false in your Dockerfiles")
+    print("     to enforce strict startup blocking after the first baseline is live.")
 
 
 if __name__ == "__main__":
-    main()
     main()
