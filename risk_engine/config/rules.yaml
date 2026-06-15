@@ -66,6 +66,12 @@
   severity: 35
   blast_radius: 20
 
+- id: NETWORK_THREAT
+  match:
+    reasons_contains: "Network threat"
+  severity: 55
+  blast_radius: 35
+
 - id: SILENT_NODE
   match:
     reasons_contains: "not reported"

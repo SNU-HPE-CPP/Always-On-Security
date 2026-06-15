@@ -1,41 +1,63 @@
 services:
   controller:
-    build: ./controller
+    build:
+      context: .
+      dockerfile: controller/Dockerfile
     container_name: controller
     environment:
       - HMAC_SECRET=${HMAC_SECRET}
       - ALLOWLIST_PATH=/opt/security/config/allowlist.yaml
+      # ── REC-08: Pre-flight integrity check ──────────────────────────
+      - SERVICE_NAME=controller
+      - CONFIG_HASHES_PATH=/opt/security/config/config_hashes.yaml
+      - CONFIG_DIR=/opt/security/config
+      - INTEGRITY_AUDIT_DIR=/data/integrity_audits
+      - INTEGRITY_ALLOW_MISSING_MANIFEST=${INTEGRITY_ALLOW_MISSING_MANIFEST:-true}
+      - INTEGRITY_STRICT=${INTEGRITY_STRICT:-false}
     volumes:
-      - ./data:/data
+      - shared_data:/data
+      - integrity_audits:/data/integrity_audits
       - ./risk_engine/config:/opt/security/config:ro
     networks:
-      - security_net
+      mgmt-net:
+        ipv4_address: 10.10.3.10
 
   risk-engine:
-    build: ./risk_engine
+    build:
+      context: .
+      dockerfile: risk_engine/Dockerfile
     container_name: risk-engine
     environment:
       - ALLOWLIST_PATH=/opt/security/config/allowlist.yaml
+      # ── REC-08: Pre-flight integrity check ──────────────────────────
+      - SERVICE_NAME=risk-engine
+      - CONFIG_HASHES_PATH=/opt/security/config/config_hashes.yaml
+      - CONFIG_DIR=/opt/security/config
+      - INTEGRITY_AUDIT_DIR=/data/integrity_audits
+      - INTEGRITY_ALLOW_MISSING_MANIFEST=${INTEGRITY_ALLOW_MISSING_MANIFEST:-true}
+      - INTEGRITY_STRICT=${INTEGRITY_STRICT:-false}
+      # ── REC-09: Forensic capture directory ──────────────────────────
+      - FORENSICS_DIR=/data/forensics
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./data:/data
+      - shared_data:/data
+      - integrity_audits:/data/integrity_audits
+      - forensics:/data/forensics
       - ./risk_engine/config:/opt/security/config:ro
     depends_on:
       - controller
     networks:
-      - security_net
+      mgmt-net:
+        ipv4_address: 10.10.3.11
 
   dashboard:
     build: ./dashboard
     container_name: dashboard
-    ports:
-      - "5000:5000"
     volumes:
-      - ./data:/data
+      - shared_data:/data
     depends_on:
       - risk-engine
-    networks:
-      - security_net
+    network_mode: host
 
   node1:
     build: ./node_agent
@@ -44,6 +66,10 @@ services:
       - NODE_NAME=node1
       - HMAC_SECRET=${HMAC_SECRET}
       - NODE_PEER_IPS=172.20.0.1,172.20.0.2,172.20.0.3,172.20.0.4
+      - NETWORK_CLUSTER_CIDR=172.20.0.0/16
+      - NETWORK_ALLOWED_PORTS=22,514,5555,5556
+      - NETWORK_ALLOWED_LISTEN_PORTS=5556
+      - NETWORK_MAX_REMOTE_TARGETS=8
       - PROCESS_POLICY_PATH=/opt/security/config/process_policy.yaml
       - CONFIG_HASHES_PATH=/opt/security/config/config_hashes.yaml
     volumes:
@@ -51,7 +77,10 @@ services:
     depends_on:
       - controller
     networks:
-      - security_net
+      compute-net:
+        ipv4_address: 10.10.1.21
+      mgmt-net:
+        ipv4_address: 10.10.3.21
 
   node2:
     build: ./node_agent
@@ -60,6 +89,10 @@ services:
       - NODE_NAME=node2
       - HMAC_SECRET=${HMAC_SECRET}
       - NODE_PEER_IPS=172.20.0.1,172.20.0.2,172.20.0.3,172.20.0.4
+      - NETWORK_CLUSTER_CIDR=172.20.0.0/16
+      - NETWORK_ALLOWED_PORTS=22,514,5555,5556
+      - NETWORK_ALLOWED_LISTEN_PORTS=5556
+      - NETWORK_MAX_REMOTE_TARGETS=8
       - PROCESS_POLICY_PATH=/opt/security/config/process_policy.yaml
       - CONFIG_HASHES_PATH=/opt/security/config/config_hashes.yaml
     volumes:
@@ -67,7 +100,10 @@ services:
     depends_on:
       - controller
     networks:
-      - security_net
+      compute-net:
+        ipv4_address: 10.10.1.22
+      mgmt-net:
+        ipv4_address: 10.10.3.22
 
   node3:
     build: ./node_agent
@@ -76,6 +112,10 @@ services:
       - NODE_NAME=node3
       - HMAC_SECRET=${HMAC_SECRET}
       - NODE_PEER_IPS=172.20.0.1,172.20.0.2,172.20.0.3,172.20.0.4
+      - NETWORK_CLUSTER_CIDR=172.20.0.0/16
+      - NETWORK_ALLOWED_PORTS=22,514,5555,5556
+      - NETWORK_ALLOWED_LISTEN_PORTS=5556
+      - NETWORK_MAX_REMOTE_TARGETS=8
       - PROCESS_POLICY_PATH=/opt/security/config/process_policy.yaml
       - CONFIG_HASHES_PATH=/opt/security/config/config_hashes.yaml
     volumes:
@@ -83,7 +123,10 @@ services:
     depends_on:
       - controller
     networks:
-      - security_net
+      compute-net:
+        ipv4_address: 10.10.1.23
+      mgmt-net:
+        ipv4_address: 10.10.3.23
 
   node4:
     build: ./node_agent
@@ -92,6 +135,10 @@ services:
       - NODE_NAME=node4
       - HMAC_SECRET=${HMAC_SECRET}
       - NODE_PEER_IPS=172.20.0.1,172.20.0.2,172.20.0.3,172.20.0.4
+      - NETWORK_CLUSTER_CIDR=172.20.0.0/16
+      - NETWORK_ALLOWED_PORTS=22,514,5555,5556
+      - NETWORK_ALLOWED_LISTEN_PORTS=5556
+      - NETWORK_MAX_REMOTE_TARGETS=8
       - PROCESS_POLICY_PATH=/opt/security/config/process_policy.yaml
       - CONFIG_HASHES_PATH=/opt/security/config/config_hashes.yaml
     volumes:
@@ -99,14 +146,70 @@ services:
     depends_on:
       - controller
     networks:
-      - security_net
+      storage-net:
+        ipv4_address: 10.10.2.31
+      mgmt-net:
+        ipv4_address: 10.10.3.31
 
   wazuh:
     build: ./wazuh
     container_name: wazuh
+    volumes:
+      - shared_data:/data
     networks:
-      - security_net
+      mgmt-net:
+        ipv4_address: 10.10.3.40
+
+  security-monitor:
+    build: ./security_monitor
+    container_name: security-monitor
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    privileged: true
+    depends_on:
+      - wazuh
+    volumes:
+      - shared_data:/var/log/shared
+    environment:
+      - SURICATA_INTERFACE=eth0
+      - ZEEK_INTERFACE=eth0
+      - ZEEK_SCRIPT=/opt/security-monitor/zeek/hpc_monitor.zeek
+    networks:
+      compute-net:
+        ipv4_address: 10.10.1.250
+      storage-net:
+        ipv4_address: 10.10.2.250
+      mgmt-net:
+        ipv4_address: 10.10.3.250
 
 networks:
-  security_net:
+  compute-net:
     driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.10.1.0/24
+  storage-net:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.10.2.0/24
+  mgmt-net:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.10.3.0/24
+
+volumes:
+  shared_data:
+  # ── REC-08: Persistent integrity audit records ──────────────────────────
+  # Stores JSON audit records from every pre-flight check run.
+  # Mount this volume or copy files out to retain evidence across rebuilds.
+  integrity_audits:
+  # ── REC-09: Pre-quarantine forensic artifacts ────────────────────────────
+  # Each quarantine event writes a JSON file here: {node}_{trigger}_{ts}.json
+  # Evidence persists even after the quarantined container is removed.
+  forensics:

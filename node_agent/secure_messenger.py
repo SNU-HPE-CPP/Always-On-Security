@@ -36,7 +36,7 @@ log = logging.getLogger("secure_messenger")
 _SECRET_ENV_VAR = "HMAC_SECRET"
 _SECRET_FILE = "/run/secrets/hmac_secret"
 _MACHINE_ID_FILE = "/etc/machine-id"
-_FALLBACK_ID_FILE = "/tmp/node_uuid"
+_FALLBACK_ID_FILE = "/tmp/node_uuid"  # nosec B108 — intentional fallback path when /etc/machine-id unavailable
 
 
 # ──────────────────────────────────────────────

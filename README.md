@@ -12,9 +12,9 @@ The system is built as a multi-container Docker application with the following l
 
 1. **Layer 1: Node Agents (`node_agent/`)** — Dual-threaded edge agents that collect system telemetry (CPU, memory, process count) while simulating workload states. Includes a built-in threat simulator for testing.
 2. **Layer 2: Event Bus & Durability (`controller/`)** — A lightweight message forwarder that receives telemetry via ZeroMQ, stamps events with a sequential offset, and persists state atomically for crash recovery.
-3. **Layer 3: Risk Engine (`risk_engine/`)** — A stateless Python microservice that assesses risk. Features context-aware threshold checks, risk decay (self-healing), cross-node correlation, and heartbeat monitoring.
+3. **Layer 3: Risk Engine (`risk_engine/`)** — A stateless Python microservice that assesses risk. Features context-aware threshold checks, risk decay (self-healing), cross-node correlation, heartbeat monitoring, and node-side network threat alerts.
 4. **Layer 4: Auto-Remediation (`risk_engine/router.py`)** — Monitors risk levels and routes decisions into buckets (silent, auto, human, quarantine). Initiates container-based node isolation via the Docker API.
-5. **Layer 5: Visibility & Alerting (`dashboard/` & `wazuh/`)** — A Flask-based web dashboard showing real-time statistics and node states, plus a simulated Wazuh SIEM manager receiving UDP alerts.
+5. **Layer 5: Visibility & Alerting (`dashboard/`, `wazuh/`, `security_monitor/`)** — A Flask-based web dashboard, a mock Wazuh SIEM manager, and a dedicated security monitor container running Suricata + Zeek on the Docker segments.
 
 ```
                 ┌──────────────────────────────────┐
@@ -31,7 +31,7 @@ The system is built as a multi-container Docker application with the following l
                 └───────────────▲──────────────────┘
                                 │ ZMQ :5555
                 ┌───────────────┴──────────────────┐
-                │          NODE AGENTS             │  ×4 (node1 to node4)
+                │          NODE AGENTS             │  ×4 (compute and storage nodes)
                 │  Telemetry & Threat Simulator    │
                 └──────────────────────────────────┘
 
@@ -39,6 +39,12 @@ The system is built as a multi-container Docker application with the following l
                 │   DASHBOARD   │  │     WAZUH     │
                 │ localhost:5000│  │ Mock SIEM :514│
                 └───────────────┘  └───────────────┘
+
+                ┌──────────────────────────────────┐
+                │ SECURITY MONITOR                 │
+                │ Suricata + Zeek + Filebeat       │
+                │ compute-net / storage-net / mgmt │
+                └──────────────────────────────────┘
 ```
 
 ---
@@ -61,6 +67,7 @@ The system is built as a multi-container Docker application with the following l
 | **High Memory** | Memory > 50% | `+20` risk points |
 | **Too Many Processes** | Process count > 300 | `+25` risk points |
 | **Suspicious Process** | Binary name match (e.g. `nmap`, `hydra`, `nc`, `stress`) | `+40` risk points |
+| **Network Threat** | Suspicious TCP egress, unexpected listeners, or high fan-out | `+55` risk points |
 
 ---
 
@@ -79,7 +86,24 @@ Currently, a node is marked as suspicious if it exhibits one or more of the foll
 * **Message Flooding**: Rate limits excessive telemetry from a single node.
 * **Config Tampering**: Hashes critical files (e.g. `/etc/hosts`) against a baseline.
 * **Lateral Movement**: Detects unexpected outbound SSH connections.
+* **Network Threat Detection**: Flags suspicious TCP egress, unexpected listening ports, and fan-out spikes that do not fit the cluster network profile.
 * **Telemetry Tampering**: Validates cryptographic HMAC-SHA256 signatures on all messages.
+
+## Network Simulation
+
+The Docker topology is split into three isolated segments:
+
+* `compute-net` for MPI-like east-west communication
+* `storage-net` for shared storage access
+* `mgmt-net` for control-plane and monitoring traffic
+
+The `security-monitor` container is attached to all three segments and is intended to inspect the Docker bridge/veth interfaces directly. Suricata handles scan and protocol-abuse detections, while Zeek handles whitelist violations, connection-graph tracking, and baseline deviation notices. Filebeat is configured to ship the generated logs into the SIEM pipeline.
+
+### Baseline and Detection Artifacts
+
+* `scripts/compute_baseline.py` reads Zeek conn logs and writes `baselines/baseline.json`
+* `scripts/beaconing_detector.py` reads conn logs and emits beaconing alerts to JSON
+* `scripts/enforce_segment_iptables.sh` applies host-side segment boundaries with iptables
 
 These detections are rule-based and serve as a proof-of-concept implementation.
 
@@ -101,15 +125,28 @@ Always-On-Security/
 │   └── templates/
 │       └── index.html
 │
+├── security_monitor/
+│   ├── Dockerfile
+│   ├── start.sh
+│   ├── filebeat.yml
+│   ├── suricata/
+│   └── zeek/
+│
 ├── node_agent/
 │   ├── agent.py
 │   ├── Dockerfile
 │   └── requirements.txt
 │
+├── scripts/
+│   ├── compute_baseline.py
+│   ├── beaconing_detector.py
+│   └── enforce_segment_iptables.sh
+│
 ├── wazuh/
 │   ├── wazuh.py
 │   └── Dockerfile
 │
+├── baselines/
 ├── data/                       # Shared SQLite Database
 │
 ├── docker-compose.yml
@@ -161,19 +198,20 @@ Before starting the system for the first time, you must generate the baseline co
 python3 generate_baseline.py
 ```
 
-Build and start all 9 services:
+Build and start all services:
 
 ```bash
 docker compose up --build -d
 ```
 
-The following containers will start inside the `security_net` bridge network:
+The following containers will start across the segmented Docker networks:
 
 * `controller`
 * `risk-engine`
 * `dashboard`
 * `node1`, `node2`, `node3`, `node4`
 * `wazuh`
+* `security-monitor`
 
 ---
 
@@ -221,6 +259,22 @@ This should trigger:
 * Node quarantine (when risk ≥ 100)
 * Wazuh alert (when node is quarantined)
 
+## Network Threat Tests
+
+The network monitor is designed for the Docker-only HPC simulation, so the easiest tests are container-to-container traffic patterns.
+
+* Port scan: run a simple port sweep from one container against another container's IP on `compute-net` or `storage-net`.
+* Unauthorized communication: send traffic from a compute container directly to the management segment.
+* Lateral movement: SSH from one node to another, then chain into a third node.
+* Beaconing: generate repeated low-byte, fixed-interval connections between the same pair of containers.
+* ICMP tunnel / protocol abuse: send large ICMP payloads or mismatched protocol traffic through Suricata-monitored paths.
+
+Expected outputs:
+
+* Suricata EVE JSON notice for port scans and ICMP tunnel patterns
+* Zeek notice for unauthorized pairs, fan-out, hop chains, and protocol mismatches
+* Python baseline JSON in `baselines/`
+
 Stop the process:
 
 ```bash
@@ -249,6 +303,44 @@ docker run --rm --network always-on-security_security_net \
 **3. Telemetry Tampering / Replay Attacks**
 Since all messages are cryptographically signed with HMAC-SHA256, sending raw JSON via `netcat` will be rejected by the Controller. To test `REPLAY_ATTACK` or `TELEMETRY_TAMPER`, you must extract the `HMAC_SECRET` from `.env` and write a custom python script using `pyzmq` to sign and send duplicate `msg_id`s or modify payloads post-signing.
 
+**4. Pre-Flight Config Integrity Block (REC-08)**
+The system will now actively refuse to start if its critical configuration files have been maliciously modified or corrupted. To test this:
+1. Make a subtle modification to a central config file on the host:
+   ```bash
+   echo "# Tampered" >> risk_engine/config/rules.yaml
+   ```
+2. Restart the risk-engine service:
+   ```bash
+   docker compose restart risk-engine
+   ```
+3. Watch the startup logs—you will see a large red error, and the container will immediately exit with code 2 rather than starting:
+   ```bash
+   docker compose logs risk-engine
+   ```
+4. Revert the file and restart to bring the service back up:
+   ```bash
+   git checkout risk_engine/config/rules.yaml
+   docker compose restart risk-engine
+   ```
+
+**5. Pre-Quarantine Forensic Capture (REC-09)**
+Trigger a quarantine on any node, then inspect the captured evidence before the container is stopped:
+1. Force a node into quarantine by running the built-in threat simulator or manually flooding its risk score.
+2. Watch the risk-engine logs for the forensic capture sequence:
+   ```bash
+   docker compose logs -f risk-engine | grep FORENSICS
+   ```
+   You will see:
+   ```
+   [FORENSICS] Starting pre-quarantine capture | node=node1 trigger=QUARANTINE
+   [FORENSICS] Artifact saved: /data/forensics/node1_QUARANTINE_20260615T130000Z.json
+   [FORENSICS] Capture complete | node=node1
+   ```
+3. Inspect the JSON artefact on the host:
+   ```bash
+   docker compose exec risk-engine cat /data/forensics/node1_QUARANTINE_*.json | python3 -m json.tool
+   ```
+   The file contains the process list, network connections, container state, recent alerts, and recent events — all captured at the exact moment of quarantine.
 ---
 
 ## Useful Commands
@@ -297,3 +389,85 @@ The core monitoring architecture has been significantly hardened to simulate an 
 
 * **5. Dark-Mode Security Dashboard (`dashboard/templates/index.html`)**
   The UI was completely overhauled into a modern, dark-mode security operations center (SOC). It features live-updating SVG threat distribution charts, node trust badges (TRUSTED vs ROGUE), protocol integrity counters, and an XSS-safe dynamic alert feed.
+
+* **6. Pre-flight Config Integrity Check (`scripts/check_config_integrity.py` & `scripts/entrypoint.sh`)**
+  Enforces NIST CM-2 / CM-6 / SI-7. A strict startup check added to `risk-engine` and `controller` verifies all service YAML configurations (`rules.yaml`, `allowlist.yaml`, etc.) against a trusted SHA-256 baseline (`config_hashes.yaml`). 
+  * If a file has been tampered with, the `entrypoint.sh` wrapper intercepts the startup, prints a detailed error to stdout, and exits with code 2. This prevents the system from ever operating with blinded detection rules or a modified allowlist.
+  * Every startup check writes a machine-readable JSON audit record to a persistent `/data/integrity_audits` volume for forensics.
+
+* **7. Pre-Quarantine Forensic Capture (`risk_engine/router.py` & `risk_engine/store.py`)**
+  Enforces NIST IR-4 / IR-5. The moment a node is escalated to the `quarantine` bucket, the system freezes evidence *before* the container is stopped:
+  * **Process list** — full `ps aux` output from inside the container, capturing every running process at time-of-quarantine.
+  * **Network connections** — active TCP connections via `ss -tnp`, revealing any live C2 channels or lateral movement paths.
+  * **Container state** — image, PID, network IPs, and mount points from `docker inspect`.
+  * **Recent security alerts** — the last 20 security alerts for the node pulled from the DB.
+  * **Recent telemetry events** — the last 20 risk-scored events from the `events` table.
+  * Evidence is written to **two independent locations**: the `forensic_snapshots` SQLite table (queryable by the dashboard) and a timestamped JSON file under the persistent `/data/forensics` volume (survives container removal and DB resets).
+
+---
+
+## Build-Time Security (CI/CD Pipeline)
+
+Layer 1 of the Always-On Security architecture — shift-left enforcement before any code reaches production.
+
+### What Was Added
+
+| File | Purpose |
+|------|---------|
+| `.github/workflows/build-time-security.yml` | 10-job security pipeline triggered on every push and PR |
+| `.github/workflows/sbom.yml` | SBOM generation on every merge to `main` |
+| `.gitleaks.toml` | Secret detection allowlist (HMAC variable refs, FIM integrity hashes) |
+| `.yamllint.yml` | YAML linting config for `risk_engine/config/` and `docker-compose.yml` |
+| `.checkov.yaml` | IaC skip list for intentional privileged/socket findings |
+| `node_agent/requirements.txt` | Pinned dependencies (was inline in Dockerfile) |
+| `*/`.dockerignore` (×6)` | Excludes `.env`, `data/`, `__pycache__/` from all build contexts |
+
+### Pipeline Stages
+
+```
+Push / PR
+    │
+    ├── Stage 1 (blocking, serial)
+    │   ├── secret-detection   GitLeaks — full git history scan
+    │   └── yaml-validation    yamllint + PyYAML safe_load on all configs
+    │
+    ├── Stage 2 (blocking, parallel)
+    │   ├── sast-bandit        Python SAST — blocks on HIGH severity
+    │   ├── sast-semgrep       p/python + p/secrets + p/owasp-top-ten
+    │   └── shellcheck         Shell script linting (advisory)
+    │
+    ├── Stage 3 (blocking, parallel)
+    │   └── sca-pip-audit      CVE scan on all requirements.txt files
+    │
+    ├── Stage 4 (advisory, parallel)
+    │   ├── hadolint           Dockerfile best-practice linting
+    │   ├── checkov            docker-compose.yml IaC scan
+    │   └── trivy              Filesystem CVE scan (blocks on CRITICAL)
+    │
+    └── Security Gate          Final pass/fail verdict for branch protection
+```
+
+### Codebase Fixes (Person B track)
+
+- **Dependency pinning** — all `requirements.txt` files pinned to exact versions; `pip-audit` reports zero CVEs
+- **`# nosec B108/B103`** — suppressed on intentional `/tmp` fallback path and attack simulator `chmod` with justification comments
+- **`# nosemgrep`** — suppressed on Flask `0.0.0.0` binding, mock SIEM `socket.bind`, and attack simulator `chmod`; all with exact rule IDs
+- **`.dockerignore`** — added to all 6 service directories; `.env` can no longer be accidentally included in a Docker image layer
+
+### Compliance Mapping
+
+| Check | NIST SP 800-234 | CIS Controls |
+|-------|----------------|--------------|
+| GitLeaks | SC-12, SC-13 | CIS 3.11, 4.1 |
+| YAML validation | CM-2, CM-6 | CIS 4.1 |
+| Bandit / Semgrep | SA-11, SI-7 | CIS 16.1, 16.4 |
+| pip-audit | SA-12, SI-2 | CIS 2.2, 7.3 |
+| Trivy | RA-5, SI-2 | CIS 7.1, 7.3 |
+| SBOM (Syft) | SA-12 | CIS 2.1 |
+
+### Known Gaps (Tracked as Issues)
+
+- HMAC\_SECRET passed as plain env var — should migrate to Docker secrets (REC-11)
+- Docker base images use floating tags (`python:3.11-slim`) — should pin to digest (DL3007)
+- No non-root `USER` instruction in Dockerfiles — containers run as root (DL3002)
+- No `HEALTHCHECK` in any Dockerfile (CKV\_DOCKER\_2)

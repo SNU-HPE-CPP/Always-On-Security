@@ -1,0 +1,7 @@
+critical_files:
+  - /etc/passwd
+  - /etc/hosts
+  - /etc/ssh/sshd_config
+
+watched_directories:
+  - /opt/app/config

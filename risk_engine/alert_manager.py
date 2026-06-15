@@ -84,6 +84,7 @@ THREAT_SEVERITY: dict[str, str] = {
     "UNAUTH_PROCESS":      "MEDIUM",
     "LATERAL_MOVEMENT":    "HIGH",
     "CONFIG_TAMPER":       "HIGH",
+    "NETWORK_THREAT":      "HIGH",
 }
 
 THREAT_ACTIONS: dict[str, str] = {
@@ -107,6 +108,8 @@ THREAT_ACTIONS: dict[str, str] = {
         "Isolate node. Audit SSH keys. Check for credential theft.",
     "CONFIG_TAMPER":
         "Restore config from golden baseline. Investigate who modified the file.",
+    "NETWORK_THREAT":
+        "Isolate node. Inspect outbound connections, listeners, and firewall policy.",
 }
 
 

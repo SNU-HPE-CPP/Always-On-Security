@@ -1,0 +1,33 @@
+filebeat.inputs:
+  - type: filestream
+    id: suricata-eve
+    enabled: true
+    paths:
+      - /var/log/suricata/eve.json
+    fields:
+      log_type: suricata
+    fields_under_root: true
+
+  - type: filestream
+    id: zeek-notice
+    enabled: true
+    paths:
+      - /var/log/zeek/notice.log
+    fields:
+      log_type: zeek_notice
+    fields_under_root: true
+
+  - type: filestream
+    id: zeek-conn
+    enabled: true
+    paths:
+      - /var/log/zeek/conn.log
+    fields:
+      log_type: zeek_conn
+    fields_under_root: true
+
+output.file:
+  path: /var/log/security
+  filename: filebeat-forwarded
+
+logging.level: info

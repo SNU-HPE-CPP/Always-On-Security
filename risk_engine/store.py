@@ -27,6 +27,8 @@ class Store:
                 cpu_usage REAL,
                 memory_usage REAL,
                 process_count INTEGER,
+                failed_login_count INTEGER DEFAULT 0,
+                privilege_escalation_attempts INTEGER DEFAULT 0,
                 event_type TEXT,
                 reasons TEXT,
                 risk_score REAL,
@@ -39,10 +41,17 @@ class Store:
 
         # Migration support for older databases
         for col, defn in [
-            ("weighted_score", "REAL"),
-            ("bucket",         "TEXT"),
-            ("correlated",     "INTEGER DEFAULT 0"),
-            ("matched_rules",  "TEXT"),
+            ("weighted_score",                "REAL"),
+            ("bucket",                        "TEXT"),
+            ("correlated",                    "INTEGER DEFAULT 0"),
+            ("matched_rules",                 "TEXT"),
+            ("failed_login_count",            "INTEGER DEFAULT 0"),
+            ("privilege_escalation_attempts",  "INTEGER DEFAULT 0"),
+            ("file_path",                     "TEXT"),
+            ("fim_event_type",                "TEXT"),
+            ("sha256",                        "TEXT"),
+            ("file_size",                     "INTEGER"),
+            ("permissions",                   "TEXT"),
         ]:
             try:
                 c.execute(f"ALTER TABLE events ADD COLUMN {col} {defn}")
@@ -123,8 +132,31 @@ class Store:
             )
         """)
 
+        # ── REC-09: Forensic snapshot table ──────────────────────────
+        # Stores pre-quarantine evidence captured before a container is stopped.
+        # NIST SP 800-234: IR-4 (Incident Handling), IR-5 (Incident Monitoring)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS forensic_snapshots (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                captured_at  TEXT NOT NULL,
+                node         TEXT NOT NULL,
+                trigger      TEXT NOT NULL,
+                risk_score   REAL NOT NULL,
+                processes    TEXT,
+                network_conns TEXT,
+                container_state TEXT,
+                recent_alerts TEXT,
+                recent_events TEXT,
+                artifact_path TEXT
+            )
+        """)
+        c.execute("""
+            CREATE INDEX IF NOT EXISTS idx_forensics_node
+            ON forensic_snapshots (node, captured_at DESC)
+        """)
+
         self.conn.commit()
-        log.info("Schema initialised (events + security tables)")
+        log.info("Schema initialised (events + security + forensic tables)")
 
     # ── Original methods ─────────────────────────────────────────────
 
@@ -149,28 +181,44 @@ class Store:
         """, (node,)).fetchone()
         return int(row["cnt"]) if row else 0
 
+    def get_node_status(self, node):
+        row = self.conn.execute(
+            "SELECT status FROM node_status WHERE node=?", (node,)
+        ).fetchone()
+        return row["status"] if row else "idle"
+
     def write_event(self, event: dict, decision) -> None:
         ts = event.get("_received_at", datetime.now(timezone.utc).isoformat())
+        fim = event.get("fim_details") or {}
         c = self.conn.cursor()
         c.execute("""
             INSERT INTO events (
                 timestamp, node, cpu_usage, memory_usage, process_count,
+                failed_login_count, privilege_escalation_attempts,
                 event_type, reasons, risk_score,
-                weighted_score, bucket, correlated, matched_rules
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                weighted_score, bucket, correlated, matched_rules,
+                file_path, fim_event_type, sha256, file_size, permissions
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             ts,
             decision.node,
             event.get("cpu_usage"),
             event.get("memory_usage"),
             event.get("process_count"),
+            event.get("failed_login_count", 0),
+            event.get("privilege_escalation_attempts", 0),
             event.get("event_type", "NORMAL"),
             json.dumps(event.get("reasons", [])),
-            int(decision.cumulative_score),
-            decision.event_score,
+            float(decision.cumulative_score),
+            float(decision.event_score),
             decision.bucket,
             1 if decision.correlated else 0,
             json.dumps([r[0] for r in decision.matched_rules]),
+            fim.get("file_path"),
+            fim.get("fim_event_type"),
+            fim.get("current_state", {}).get("sha256") if fim.get("current_state") else None,
+            fim.get("current_state", {}).get("file_size") if fim.get("current_state") else None,
+            fim.get("current_state", {}).get("permissions") if fim.get("current_state") else None,
         ))
         c.execute("""
             INSERT INTO node_scores (node, cumulative_score, updated_at)
@@ -389,4 +437,66 @@ class Store:
             LEFT JOIN node_identity ni ON ni.node = ns.node
             ORDER BY ns.node ASC
         """).fetchall()
+        return [dict(r) for r in rows]
+
+    # ── REC-09: Forensic snapshot methods ───────────────────────────
+
+    def write_forensic_snapshot(
+        self,
+        node: str,
+        trigger: str,
+        risk_score: float,
+        processes: list,
+        network_conns: list,
+        container_state: dict,
+        recent_alerts: list,
+        recent_events: list,
+        artifact_path: str | None = None,
+    ) -> int:
+        """
+        Persist a pre-quarantine forensic snapshot.
+        Returns the row ID of the inserted record.
+        NIST IR-4 / IR-5 — evidence preservation before remediation.
+        """
+        ts = datetime.now(timezone.utc).isoformat()
+        c = self.conn.cursor()
+        c.execute("""
+            INSERT INTO forensic_snapshots (
+                captured_at, node, trigger, risk_score,
+                processes, network_conns, container_state,
+                recent_alerts, recent_events, artifact_path
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            ts,
+            node,
+            trigger,
+            risk_score,
+            json.dumps(processes),
+            json.dumps(network_conns),
+            json.dumps(container_state),
+            json.dumps(recent_alerts),
+            json.dumps(recent_events),
+            artifact_path,
+        ))
+        self.conn.commit()
+        row_id = c.lastrowid
+        log.info(
+            "[FORENSICS] Snapshot stored | node=%s trigger=%s id=%s artifact=%s",
+            node, trigger, row_id, artifact_path,
+        )
+        return row_id
+
+    def get_forensic_snapshots(self, node: str = None, limit: int = 20) -> list:
+        """Return forensic snapshots, optionally filtered by node."""
+        if node:
+            rows = self.conn.execute("""
+                SELECT * FROM forensic_snapshots
+                WHERE node = ?
+                ORDER BY captured_at DESC LIMIT ?
+            """, (node, limit)).fetchall()
+        else:
+            rows = self.conn.execute("""
+                SELECT * FROM forensic_snapshots
+                ORDER BY captured_at DESC LIMIT ?
+            """, (limit,)).fetchall()
         return [dict(r) for r in rows]

@@ -40,5 +40,8 @@ docker-compose.override.yml
 docker-cheatsheet.md
 Proposed_architecture_diagram.txt
 merge-analysis.md
+network_layers.md
+.agents
+.claude/
 # Local data folder
 data/

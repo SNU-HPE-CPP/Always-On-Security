@@ -58,7 +58,12 @@ def validate(event: dict) -> bool:
     return REQUIRED_FIELDS.issubset(event.keys())
 
 
-def heartbeat_checker(store: Store, threat_detector: ThreatDetector, alert_manager: AlertManager):
+def heartbeat_checker(
+    store: Store,
+    threat_detector: ThreatDetector,
+    alert_manager: AlertManager,
+    router: Router,
+):
     """
     Detects nodes that have stopped sending telemetry.
     Runs in a background thread, checking every 10 seconds.
@@ -84,6 +89,7 @@ def heartbeat_checker(store: Store, threat_detector: ThreatDetector, alert_manag
                         store.write_heartbeat_event(node=node, delta_seconds=delta)
                         signal = threat_detector.build_silent_node_signal(node, delta)
                         alert_manager.emit(signal)
+                        router._quarantine(node)
                     except Exception as e:
                         log.error(f"Heartbeat processing error: {e}")
         time.sleep(10)
@@ -104,7 +110,7 @@ def main():
             f"{CONFIG}/thresholds.yaml",
             f"{CONFIG}/node_criticality.yaml",
         ),
-        router    = Router.from_yaml(f"{CONFIG}/thresholds.yaml"),
+        router    = Router.from_yaml(f"{CONFIG}/thresholds.yaml", store=store),
     )
 
     threat_detector = ThreatDetector(store)
@@ -116,7 +122,7 @@ def main():
     # Start heartbeat checker thread
     hb_thread = threading.Thread(
         target=heartbeat_checker,
-        args=(store, threat_detector, alert_manager),
+        args=(store, threat_detector, alert_manager, pipeline.router),
         name="HeartbeatChecker",
         daemon=True,
     )
@@ -188,6 +194,12 @@ def main():
             if signals:
                 alerts = alert_manager.emit_batch(signals)
                 log.info(f"Emitted {len(alerts)} threat alert(s) for node={node}")
+                if any(alert.severity == "CRITICAL" for alert in alerts):
+                    log.critical(
+                        f"Critical threat detected for node={node}; "
+                        "initiating immediate quarantine"
+                    )
+                    pipeline.router._quarantine(node)
 
         except Exception as e:
             log.error(

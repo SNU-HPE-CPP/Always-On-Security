@@ -1,0 +1,39 @@
+%YAML 1.1
+---
+default-rule-path: /etc/suricata/rules
+threshold-file: /etc/suricata/threshold.conf
+rule-files:
+  - hpc-scan.rules
+
+outputs:
+  - eve-log:
+      enabled: yes
+      filetype: regular
+      filename: eve.json
+      types:
+        - alert:
+        - http:
+        - ssh:
+        - dns:
+        - tls:
+        - flow:
+        - stats:
+
+af-packet:
+  - interface: eth0
+    cluster-id: 99
+    cluster-type: cluster_flow
+
+detect-engine:
+  - profile: high
+
+app-layer:
+  protocols:
+    http:
+      enabled: yes
+    ssh:
+      enabled: yes
+    dns:
+      enabled: yes
+    tls:
+      enabled: yes
