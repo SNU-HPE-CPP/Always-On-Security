@@ -22,10 +22,10 @@ import psutil
 SERVICE_ALLOWLIST = {
     "compute-net": {22, 50000, 50001, 50002},
     "storage-net": {22, 2049},
-    "mgmt-net": {22, 514, 5555, 5556},
+    "mgmt-net": {22, 5514, 5555, 5556},  # 5514 = wazuh mock syslog (non-root)
 }
 
-EXPECTED_PORTS = {22, 2049, 514, 5555, 5556, 50000, 50001, 50002}
+EXPECTED_PORTS = {22, 2049, 5514, 5555, 5556, 50000, 50001, 50002}
 
 
 def _emit(path: Path, record: dict) -> None:
@@ -88,7 +88,7 @@ def main() -> int:
                 "host": hostname,
                 "type": "zeek_conn",
                 "pairs": [],
-                "allowlist": SERVICE_ALLOWLIST,
+                "allowlist": {k: sorted(v) for k, v in SERVICE_ALLOWLIST.items()},
             })
 
         except Exception as exc:

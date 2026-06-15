@@ -1,0 +1,47 @@
+# Fast-path enforcement policy for the Policy Engine (security_monitor).
+#
+# The policy engine evaluates incoming correlated threat records against this
+# table BEFORE score accumulation. A matching policy triggers an immediate
+# enforcement action, bypassing the cumulative risk scoring pipeline.
+#
+# Supported actions:
+#   quarantine      — stop the container via Docker API
+#   pause           — pause the container via Docker API
+#   network_isolate — disconnect container from compute-net and storage-net
+#
+# Match fields (all fields in a policy entry must match for the rule to fire):
+#   threat_type  — matches event["threat_type"] exactly
+#   severity     — matches event["severity"] exactly
+#
+# Rules are evaluated in order; the first match wins.
+
+policies:
+  # Critical controller-detected threats: stop immediately
+  - threat_type: ROGUE_NODE
+    action: quarantine
+
+  - threat_type: NODE_IMPERSONATION
+    action: quarantine
+
+  - threat_type: TELEMETRY_TAMPER
+    action: quarantine
+
+  # Critical correlated threats: stop immediately
+  - threat_type: CONFIG_TAMPER
+    severity: CRITICAL
+    action: quarantine
+
+  - severity: CRITICAL
+    action: quarantine
+
+  # Lateral movement: pause to halt spread while investigation begins
+  - threat_type: LATERAL_MOVEMENT
+    action: pause
+
+  # Network fan-out excess: remove from data networks, preserve mgmt access
+  - threat_type: Fanout_Excess
+    action: network_isolate
+
+  - threat_type: NETWORK_THREAT
+    severity: HIGH
+    action: network_isolate

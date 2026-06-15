@@ -82,10 +82,10 @@ event zeek_init()
     service_allowlist[10.10.1.22] = set(22/tcp, 50000/tcp, 50001/tcp, 50002/tcp);
     service_allowlist[10.10.1.23] = set(22/tcp, 50000/tcp, 50001/tcp, 50002/tcp);
     service_allowlist[10.10.2.31] = set(22/tcp, 2049/tcp);
-    service_allowlist[10.10.3.10] = set(22/tcp, 514/tcp, 5555/tcp, 5556/tcp);
-    service_allowlist[10.10.3.11] = set(22/tcp, 514/tcp, 5555/tcp, 5556/tcp);
-    service_allowlist[10.10.3.12] = set(22/tcp, 514/tcp, 5555/tcp, 5556/tcp);
-    service_allowlist[10.10.3.31] = set(22/tcp, 514/tcp, 5555/tcp, 5556/tcp);
+    service_allowlist[10.10.3.10] = set(22/tcp, 5514/tcp, 5555/tcp, 5556/tcp);
+    service_allowlist[10.10.3.11] = set(22/tcp, 5514/tcp, 5555/tcp, 5556/tcp);
+    service_allowlist[10.10.3.12] = set(22/tcp, 5514/tcp, 5555/tcp, 5556/tcp);
+    service_allowlist[10.10.3.31] = set(22/tcp, 5514/tcp, 5555/tcp, 5556/tcp);
 
     expected_pairs[pair_key(10.10.1.21, 10.10.1.22)] = T;
     expected_pairs[pair_key(10.10.1.22, 10.10.1.23)] = T;

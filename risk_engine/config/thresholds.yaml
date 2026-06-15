@@ -4,6 +4,11 @@ buckets:
   human: [71, 100]
   # score > 100 → quarantine (fallthrough)
 
+# Per-cycle decay applied to a node's cumulative score when no rules match.
+# Higher values make the score fall faster after threat activity subsides.
+# FIM events suppress decay for 300 s (fim_hold_until in WeightedScorer).
+decay_rate: 5.0
+
 correlation:
   window_seconds: 600
   min_nodes: 3

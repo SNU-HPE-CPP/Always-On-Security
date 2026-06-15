@@ -5,5 +5,5 @@
 # Regenerate from a known-good node with:
 #   python3 generate_baseline.py
 
-/etc/hosts: 689b6dd6a6456d2154bd16dadab1af53d95154569a39559e0cd5429b9ad65a43
-/etc/passwd: 8ef33f85e1e25ad20a0d3d42f0ce0032c1360a665ccb7242e00162eaf8ad30ac
+/etc/hosts: 10189cc7cf9dd18982685717a27274f1b7e416cbdd977b11538a720fa7eb4465
+/etc/passwd: fb61c8c8f2be52a716d57e49b9fbb3b078fb8349c9c08d1de52c40b487507dda

@@ -1,0 +1,29 @@
+# Root .dockerignore — applies when docker-compose builds with context: .
+# Excludes noise, dev artifacts, and per-component files that are not needed
+# by the component being built. Each Dockerfile copies explicitly from its
+# subdirectory and from shared/, so only those paths need to reach the daemon.
+
+.git/
+.github/
+.env
+.env.example
+.gitleaks.toml
+.checkov.yaml
+.yamllint.yml
+
+baselines/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Exclude node_agent build context from root builds (node_agent uses its own context)
+node_agent/
+
+# Exclude wazuh build context from root builds (wazuh uses its own context)
+wazuh/
+
+# README and docs — not needed at runtime
+README*.md
+REFACTOR.md
+ReadME_FIM.md

@@ -1,10 +1,15 @@
 FROM python:3.11-slim
 
-WORKDIR /app
+# Create unprivileged system user
+RUN groupadd -g 10001 appgroup && \
+    useradd -u 10001 -g appgroup -m -s /bin/bash appuser
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+WORKDIR /home/appuser/app
 
-COPY agent.py security_collector.py secure_messenger.py fim_config.yaml ./
+COPY agent.py ./
+
+RUN chown -R appuser:appgroup /home/appuser/app
+
+USER appuser
 
 CMD ["python", "agent.py"]

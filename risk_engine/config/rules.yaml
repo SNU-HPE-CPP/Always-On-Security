@@ -22,6 +22,18 @@
   severity: 35
   blast_radius: 20
 
+- id: FIM_CONFIG_TAMPER
+  match:
+    reasons_contains: "Config file integrity check failed"
+  severity: 50
+  blast_radius: 30
+
+- id: FIM_FILE_MODIFIED
+  match:
+    reasons_contains: "Config tamper on"
+  severity: 50
+  blast_radius: 30
+
 # ── Security Layer Rules ─────────────────────────────────────────────────────
 
 - id: ROGUE_NODE

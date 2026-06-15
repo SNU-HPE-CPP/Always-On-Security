@@ -1,6 +1,8 @@
 services:
   controller:
-    build: ./controller
+    build:
+      context: .
+      dockerfile: controller/Dockerfile
     container_name: controller
     environment:
       - HMAC_SECRET=${HMAC_SECRET}
@@ -13,12 +15,18 @@ services:
         ipv4_address: 10.10.3.10
 
   risk-engine:
-    build: ./risk_engine
+    build:
+      context: .
+      dockerfile: risk_engine/Dockerfile
+      args:
+        DOCKER_GID: "963"
     container_name: risk-engine
     environment:
       - ALLOWLIST_PATH=/opt/security/config/allowlist.yaml
+    cap_add:
+      - NET_ADMIN
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run/docker.sock:/var/run/docker.sock:ro
       - shared_data:/data
       - ./risk_engine/config:/opt/security/config:ro
     depends_on:
@@ -28,29 +36,34 @@ services:
         ipv4_address: 10.10.3.11
 
   dashboard:
-    build: ./dashboard
+    build:
+      context: .
+      dockerfile: dashboard/Dockerfile
     container_name: dashboard
     volumes:
-      - shared_data:/data
+      - shared_data:/data:ro
     depends_on:
       - risk-engine
-    network_mode: host
+    networks:
+      mgmt-net:
+        ipv4_address: 10.10.3.20
+      host-access:
+    ports:
+      - "5000:5000"
 
+  # ── Tenant Workload Nodes (Workload_Zone) ──────────────────────────
+  # Principle of least privilege:
+  #   • No HMAC_SECRET — tenants have zero visibility into the security bus
+  #   • No security config volume mounts
+  #   • No capabilities beyond the Docker default set
+  #   • No Docker socket access
+  #   • Non-root user (appuser, UID 10001) enforced in Dockerfile
   node1:
-    build: ./node_agent
+    build:
+      context: node_agent
     container_name: node1
     environment:
       - NODE_NAME=node1
-      - HMAC_SECRET=${HMAC_SECRET}
-      - NODE_PEER_IPS=172.20.0.1,172.20.0.2,172.20.0.3,172.20.0.4
-      - NETWORK_CLUSTER_CIDR=172.20.0.0/16
-      - NETWORK_ALLOWED_PORTS=22,514,5555,5556
-      - NETWORK_ALLOWED_LISTEN_PORTS=5556
-      - NETWORK_MAX_REMOTE_TARGETS=8
-      - PROCESS_POLICY_PATH=/opt/security/config/process_policy.yaml
-      - CONFIG_HASHES_PATH=/opt/security/config/config_hashes.yaml
-    volumes:
-      - ./risk_engine/config:/opt/security/config:ro
     depends_on:
       - controller
     networks:
@@ -60,20 +73,11 @@ services:
         ipv4_address: 10.10.3.21
 
   node2:
-    build: ./node_agent
+    build:
+      context: node_agent
     container_name: node2
     environment:
       - NODE_NAME=node2
-      - HMAC_SECRET=${HMAC_SECRET}
-      - NODE_PEER_IPS=172.20.0.1,172.20.0.2,172.20.0.3,172.20.0.4
-      - NETWORK_CLUSTER_CIDR=172.20.0.0/16
-      - NETWORK_ALLOWED_PORTS=22,514,5555,5556
-      - NETWORK_ALLOWED_LISTEN_PORTS=5556
-      - NETWORK_MAX_REMOTE_TARGETS=8
-      - PROCESS_POLICY_PATH=/opt/security/config/process_policy.yaml
-      - CONFIG_HASHES_PATH=/opt/security/config/config_hashes.yaml
-    volumes:
-      - ./risk_engine/config:/opt/security/config:ro
     depends_on:
       - controller
     networks:
@@ -83,20 +87,11 @@ services:
         ipv4_address: 10.10.3.22
 
   node3:
-    build: ./node_agent
+    build:
+      context: node_agent
     container_name: node3
     environment:
       - NODE_NAME=node3
-      - HMAC_SECRET=${HMAC_SECRET}
-      - NODE_PEER_IPS=172.20.0.1,172.20.0.2,172.20.0.3,172.20.0.4
-      - NETWORK_CLUSTER_CIDR=172.20.0.0/16
-      - NETWORK_ALLOWED_PORTS=22,514,5555,5556
-      - NETWORK_ALLOWED_LISTEN_PORTS=5556
-      - NETWORK_MAX_REMOTE_TARGETS=8
-      - PROCESS_POLICY_PATH=/opt/security/config/process_policy.yaml
-      - CONFIG_HASHES_PATH=/opt/security/config/config_hashes.yaml
-    volumes:
-      - ./risk_engine/config:/opt/security/config:ro
     depends_on:
       - controller
     networks:
@@ -106,20 +101,11 @@ services:
         ipv4_address: 10.10.3.23
 
   node4:
-    build: ./node_agent
+    build:
+      context: node_agent
     container_name: node4
     environment:
       - NODE_NAME=node4
-      - HMAC_SECRET=${HMAC_SECRET}
-      - NODE_PEER_IPS=172.20.0.1,172.20.0.2,172.20.0.3,172.20.0.4
-      - NETWORK_CLUSTER_CIDR=172.20.0.0/16
-      - NETWORK_ALLOWED_PORTS=22,514,5555,5556
-      - NETWORK_ALLOWED_LISTEN_PORTS=5556
-      - NETWORK_MAX_REMOTE_TARGETS=8
-      - PROCESS_POLICY_PATH=/opt/security/config/process_policy.yaml
-      - CONFIG_HASHES_PATH=/opt/security/config/config_hashes.yaml
-    volumes:
-      - ./risk_engine/config:/opt/security/config:ro
     depends_on:
       - controller
     networks:
@@ -128,8 +114,33 @@ services:
       mgmt-net:
         ipv4_address: 10.10.3.31
 
+  # ── Host/Cluster Observer (Infrastructure_Zone) ────────────────────
+  # External privileged observer: reads Docker stats, container top,
+  # and performs FIM via Docker's get_archive API (no exec into tenant).
+  # HMAC_SECRET scoped to Infrastructure_Zone only.
+  host-observer:
+    build:
+      context: .
+      dockerfile: host_observer/Dockerfile
+      args:
+        DOCKER_GID: "963"
+    container_name: host-observer
+    environment:
+      - HMAC_SECRET=${HMAC_SECRET}
+      - CONTROLLER_URL=tcp://controller:5555
+      - ALLOWLIST_PATH=/opt/security/config/allowlist.yaml
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./risk_engine/config:/opt/security/config:ro
+    depends_on:
+      - controller
+    networks:
+      mgmt-net:
+        ipv4_address: 10.10.3.12
+
   wazuh:
-    build: ./wazuh
+    build:
+      context: wazuh
     container_name: wazuh
     volumes:
       - shared_data:/data
@@ -137,21 +148,39 @@ services:
       mgmt-net:
         ipv4_address: 10.10.3.40
 
+  # ── Security Monitor (Infrastructure_Zone) ─────────────────────────
+  # Runs Suricata + Zeek for passive NIDS and the Python pipeline:
+  #   docker_collector → network_collector → threat_correlator →
+  #   policy_engine → event_forwarder
+  #
+  # Requires privileged + CAP_NET_ADMIN + CAP_NET_RAW for Suricata/Zeek
+  # packet capture. This is correct: the container is Infrastructure_Zone.
+  # Python supervisor (main.py) runs as non-root appuser (UID 10001).
+  # HMAC_SECRET correctly scoped to Infrastructure_Zone only.
   security-monitor:
-    build: ./security_monitor
+    build:
+      context: .
+      dockerfile: security_monitor/Dockerfile
+      args:
+        DOCKER_GID: "963"
     container_name: security-monitor
     cap_add:
       - NET_ADMIN
       - NET_RAW
     privileged: true
-    depends_on:
-      - wazuh
-    volumes:
-      - shared_data:/var/log/shared
     environment:
+      - HMAC_SECRET=${HMAC_SECRET}
+      - CONTROLLER_URL=tcp://controller:5555
       - SURICATA_INTERFACE=eth0
       - ZEEK_INTERFACE=eth0
       - ZEEK_SCRIPT=/opt/security-monitor/zeek/hpc_monitor.zeek
+    depends_on:
+      - wazuh
+      - controller
+    volumes:
+      - shared_data:/var/log/shared
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./risk_engine/config:/opt/security/config:ro
     networks:
       compute-net:
         ipv4_address: 10.10.1.250
@@ -179,6 +208,10 @@ networks:
     ipam:
       config:
         - subnet: 10.10.3.0/24
+  # Non-internal bridge used exclusively to publish the dashboard port to the host.
+  # No other services join this network, so it doesn't widen the attack surface.
+  host-access:
+    driver: bridge
 
 volumes:
   shared_data:

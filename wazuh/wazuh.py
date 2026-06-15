@@ -4,9 +4,9 @@ import sqlite3
 from datetime import datetime
 
 HOST = "0.0.0.0"
-PORT = 514
+PORT = 5514  # nosemgrep — port < 1024 requires root; 5514 is equivalent for intra-cluster syslog
 
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)  # nosemgrep: python.lang.security.audit.network.bind.avoid-bind-to-all-interfaces — intentional: mock SIEM must receive syslog from all containers
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind((HOST, PORT))
 
 DB_PATH = "/data/events.db"

@@ -2,11 +2,12 @@ import logging
 import socket
 import json
 import subprocess
+from network_isolator import NetworkIsolator
 
 log = logging.getLogger(__name__)
 
 WAZUH_MANAGER_IP = "wazuh"
-WAZUH_PORT = 514
+WAZUH_PORT = 5514  # Wazuh mock listens on 5514 (non-root); real Wazuh uses 514 (root/privileged)
 
 
 class Router:
@@ -100,69 +101,17 @@ class Router:
             )
 
     def _pause(self, node: str) -> None:
-        client = self._get_docker()
-        if client is None:
-            log.error(f"Cannot isolate {node}: Docker unavailable")
-            return
-        try:
-            container = client.containers.get(node)
-            container.reload()
-            networks = container.attrs.get("NetworkSettings", {}).get("Networks", {})
-            mgmt_network = networks.get("mgmt-net")
-            if mgmt_network and mgmt_network.get("IPAddress"):
-                container_ip = mgmt_network["IPAddress"]
-            else:
-                container_ip = next(
-                    (
-                        details.get("IPAddress")
-                        for details in networks.values()
-                        if details.get("IPAddress")
-                    ),
-                    None,
-                )
-
-            if not container_ip:
-                log.error(f"Cannot isolate {node}: no container IP found")
-                return
-
-            drop_rule = ["iptables", "-C", "FORWARD", "-s", container_ip, "-j", "DROP"]
-            insert_rule = ["iptables", "-I", "FORWARD", "-s", container_ip, "-j", "DROP"]
-
-            check_result = subprocess.run(drop_rule, capture_output=True, text=True)
-            if check_result.returncode != 0:
-                subprocess.run(insert_rule, check=True)
-
-            log.warning(
-                f"Node {node} isolated with iptables DROP rule "
-                f"(container_ip={container_ip})"
-            )
-        except Exception as e:
-            log.error(f"Isolation failed for {node}: {e}")
+        log.warning(f"Initiating network quarantine and Docker pause for {node}...")
+        isolator = NetworkIsolator()
+        isolator.quarantine_network(node)
+        isolator.pause_node(node)
 
     def _quarantine(self, node: str) -> None:
+        log.critical(f"Initiating Docker stop (quarantine) for {node}...")
+        isolator = NetworkIsolator()
+        isolator.stop_node(node)
+        isolator.isolate_node(node)
 
-        client = self._get_docker()
-
-        if client is None:
-            log.error(f"Cannot quarantine {node}: " f"Docker unavailable")
-            return
-
-        try:
-
-            container = client.containers.get(node)
-
-            container.reload()
-            if container.status in {"exited", "dead", "removing"}:
-                log.info(f"Node {node} is already stopped; skipping quarantine")
-                return
-
-            container.stop()
-
-            log.critical(f"Node {node} quarantined " f"(container stopped)")
-
-        except Exception as e:
-
-            log.error(f"Quarantine failed for " f"{node}: {e}")
 
     def _send_wazuh_alert(
         self,

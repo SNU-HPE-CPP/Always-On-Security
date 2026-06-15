@@ -6,6 +6,8 @@ allowed_nodes:
   - node2
   - node3
   - node4
+  - security-monitor
+
 
 # Message flooding threshold.
 # If a node sends more than max_msgs_per_60s messages in any 60-second window,
@@ -35,7 +37,7 @@ network_detection:
   cluster_cidr: 172.20.0.0/16
   allowed_remote_ports:
     - 22
-    - 514
+    - 5514   # wazuh mock SIEM (non-root unprivileged equivalent of 514)
     - 5555
     - 5556
   allowed_listen_ports:

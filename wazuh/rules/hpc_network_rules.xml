@@ -26,15 +26,15 @@
   <rule id="110004" level="8">
     <decoded_as>json</decoded_as>
     <field name="log_type">zeek_notice</field>
-    <field name="msg">Unauthorized container communication</field>
-    <description>Whitelisted container pair violation</description>
+    <field name="msg">Unexpected connection pair</field>
+    <description>Unexpected container communication pair detected</description>
     <group>network,unauthorized_comm,high</group>
   </rule>
 
   <rule id="110005" level="8">
     <decoded_as>json</decoded_as>
     <field name="log_type">zeek_notice</field>
-    <field name="msg">Lateral movement</field>
+    <field name="msg">SSH hop chain detected</field>
     <description>Lateral movement or SSH hop chain detected</description>
     <group>network,lateral_movement,high</group>
   </rule>

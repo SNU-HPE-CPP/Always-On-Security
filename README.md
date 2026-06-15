@@ -1,411 +1,396 @@
-# Always-On-Security
+# Always-On Security
 
-A distributed, container-based security monitoring simulation that demonstrates real-time anomaly detection, cumulative risk scoring, automated quarantine, and live dashboard visualization.
-
-*Note: This project has been significantly enhanced with an **Advanced Security Layer** providing cryptographic node identity, replay protection, and node-level threat detection.*
+A distributed, container-based HPC security monitoring platform that simulates real-time threat detection, cumulative risk scoring, automated enforcement, and live SOC dashboard visualization — architected around the trust-boundary principles of air-gapped, production HPC environments.
 
 ---
 
-## Architecture Overview
+## Table of Contents
 
-The system is built as a multi-container Docker application with the following layers:
-
-1. **Layer 1: Node Agents (`node_agent/`)** — Dual-threaded edge agents that collect system telemetry (CPU, memory, process count) while simulating workload states. Includes a built-in threat simulator for testing.
-2. **Layer 2: Event Bus & Durability (`controller/`)** — A lightweight message forwarder that receives telemetry via ZeroMQ, stamps events with a sequential offset, and persists state atomically for crash recovery.
-3. **Layer 3: Risk Engine (`risk_engine/`)** — A stateless Python microservice that assesses risk. Features context-aware threshold checks, risk decay (self-healing), cross-node correlation, heartbeat monitoring, and node-side network threat alerts.
-4. **Layer 4: Auto-Remediation (`risk_engine/router.py`)** — Monitors risk levels and routes decisions into buckets (silent, auto, human, quarantine). Initiates container-based node isolation via the Docker API.
-5. **Layer 5: Visibility & Alerting (`dashboard/`, `wazuh/`, `security_monitor/`)** — A Flask-based web dashboard, a mock Wazuh SIEM manager, and a dedicated security monitor container running Suricata + Zeek on the Docker segments.
-
-```
-                ┌──────────────────────────────────┐
-                │          RISK ENGINE             │
-                │  YAML Rules & Scoring Pipeline   │
-                │  Heartbeat & Correlation         │
-                │  Remediation Router              │──► Docker API (Quarantine)
-                │  DB Writer                       │──► SQLite
-                └───────────────▲──────────────────┘
-                                │ ZMQ :5556
-                ┌───────────────┴──────────────────┐
-                │          CONTROLLER              │
-                │  Message Forwarder & Offsets     │
-                └───────────────▲──────────────────┘
-                                │ ZMQ :5555
-                ┌───────────────┴──────────────────┐
-                │          NODE AGENTS             │  ×4 (compute and storage nodes)
-                │  Telemetry & Threat Simulator    │
-                └──────────────────────────────────┘
-
-                ┌───────────────┐  ┌───────────────┐
-                │   DASHBOARD   │  │     WAZUH     │
-                │ localhost:5000│  │ Mock SIEM :514│
-                └───────────────┘  └───────────────┘
-
-                ┌──────────────────────────────────┐
-                │ SECURITY MONITOR                 │
-                │ Suricata + Zeek + Filebeat       │
-                │ compute-net / storage-net / mgmt │
-                └──────────────────────────────────┘
-```
+1. [What This Project Does](#1-what-this-project-does)
+2. [How It Started — Original Architecture](#2-how-it-started--original-architecture)
+3. [The Problem — Why It Was Refactored](#3-the-problem--why-it-was-refactored)
+4. [The Refactored Architecture](#4-the-refactored-architecture)
+5. [Component Reference](#5-component-reference)
+6. [Security Detection Coverage](#6-security-detection-coverage)
+7. [File Integrity Monitoring (FIM)](#7-file-integrity-monitoring-fim)
+8. [Build-Time Security Pipeline](#8-build-time-security-pipeline)
+9. [Getting Started](#9-getting-started)
+10. [Testing & Simulation](#10-testing--simulation)
+11. [Known Gaps](#11-known-gaps)
 
 ---
 
-## Key Features
+## 1. What This Project Does
 
-* **Cumulative Risk Scoring & Self-Healing:** The controller maintains a cumulative risk score for each node. If anomalies cease, the risk score decays slowly back to 0. Accounts for asset criticality.
-* **Heartbeat Monitor:** Detects silent node failures. If a node fails to send telemetry for 30 seconds, it is marked as unresponsive.
-* **Cross-Node Correlation:** Detects coordinated attacks hitting 3+ nodes simultaneously and applies a risk multiplier.
-* **Automated Quarantine:** Once a node's cumulative risk score hits or exceeds `100` (quarantine bucket), the system automatically stops the compromised node's container via the Docker API.
-* **Mock Wazuh Integration:** A simulated Wazuh SIEM manager receives and displays security alerts via UDP when a node is quarantined.
+Always-On Security is a multi-container Docker simulation of an HPC cluster security stack. It models the kind of always-on, host-level security instrumentation found in HPE/SGI clusters and Slurm-managed compute environments.
 
----
+The system continuously monitors a set of tenant workload nodes and enforces security policy without any agent running inside the monitored containers. When a threat is detected — whether a resource anomaly, a tampered config file, a rogue identity, or a network-level attack — the platform scores it, correlates it across nodes, and automatically responds: pausing, stopping, or network-isolating the affected container.
 
-## Security Detection Rules
+Key capabilities:
 
-| Rule | Trigger Condition | Risk Increment |
-| :--- | :--- | :--- |
-| **High CPU** | CPU > 10% | `+20` risk points |
-| **High Memory** | Memory > 50% | `+20` risk points |
-| **Too Many Processes** | Process count > 300 | `+25` risk points |
-| **Suspicious Process** | Binary name match (e.g. `nmap`, `hydra`, `nc`, `stress`) | `+40` risk points |
-| **Network Threat** | Suspicious TCP egress, unexpected listeners, or high fan-out | `+55` risk points |
+- Continuous external telemetry collection from tenant containers via the Docker API
+- HMAC-authenticated, replay-protected, flood-guarded message bus (ZeroMQ)
+- Cumulative risk scoring with configurable decay (self-healing) and 5-minute hold for high-severity events
+- Cross-node attack correlation with risk multipliers
+- Automated enforcement: pause, stop, network quarantine, Docker network disconnect
+- File Integrity Monitoring (FIM) via Docker's archive API — no exec inside tenant containers
+- Passive NIDS via Suricata (signature) and Zeek (behavioural) with a 5-module Python pipeline
+- Real-time dark-mode SOC dashboard with live threat charts and node trust badges
+- 10-job CI/CD security pipeline with SAST, SCA, secret detection, IaC scanning, and SBOM generation
 
 ---
 
-## Suspicious Activity Detection
+## 2. How It Started — Original Architecture
 
-Currently, a node is marked as suspicious if it exhibits one or more of the following:
+The original system was built as a functional demo of a security monitoring pipeline. It worked, and demonstrated several realistic ideas, but its trust model was inverted.
 
-* High CPU usage
-* High memory usage
-* Excessive number of running processes
-* Suspicious process names (e.g., `stress`, `nmap`, `hydra`, `netcat`)
+### What it had right
 
-**Additionally, the system now covers advanced Node-Related Threats:**
-* **Rogue Node Detection**: Rejects telemetry from unauthorized machine IDs.
-* **Replay Attacks**: Blocks duplicated, previously seen messages.
-* **Message Flooding**: Rate limits excessive telemetry from a single node.
-* **Config Tampering**: Hashes critical files (e.g. `/etc/hosts`) against a baseline.
-* **Lateral Movement**: Detects unexpected outbound SSH connections.
-* **Network Threat Detection**: Flags suspicious TCP egress, unexpected listening ports, and fan-out spikes that do not fit the cluster network profile.
-* **Telemetry Tampering**: Validates cryptographic HMAC-SHA256 signatures on all messages.
+- **ZeroMQ message bus** between node agents and a central controller — realistic HPC pattern
+- **Cumulative risk scoring with decay** — stateful, context-aware scoring is used in production SIEM platforms
+- **Cross-node correlation** — detecting coordinated multi-node attacks is a real detection technique
+- **Docker API enforcement** (`container.stop()`, `container.pause()`) — correct placement, infrastructure layer
+- **Zeek + Suricata** for network-layer detection — standard HPC NIDS tooling
+- **HMAC-SHA256 telemetry signing** — correct cryptographic pattern for authenticating edge telemetry
 
-## Network Simulation
+### What it got wrong
 
-The Docker topology is split into three isolated segments:
+**Security logic ran inside the tenant containers.** Every node agent (`node_agent/agent.py`) contained:
 
-* `compute-net` for MPI-like east-west communication
-* `storage-net` for shared storage access
-* `mgmt-net` for control-plane and monitoring traffic
+- `psutil` calls scanning the host process table
+- `inotify` watches on `/etc/hosts`, `/etc/passwd`, `/etc/ssh/sshd_config`
+- Inline golden-copy file restore: `open('/etc/passwd', 'wb').write(golden)`
+- Permission restoration: `os.chmod('/etc/passwd', 0o644)`
+- Process kill: `psutil.Process(pid).kill()`
+- A full attack simulator (Stages 1–5) that modified the very files it was supposed to protect
 
-The `security-monitor` container is attached to all three segments and is intended to inspect the Docker bridge/veth interfaces directly. Suricata handles scan and protocol-abuse detections, while Zeek handles whitelist violations, connection-graph tracking, and baseline deviation notices. Filebeat is configured to ship the generated logs into the SIEM pipeline.
+This means the node containers ran as **root**, held the `HMAC_SECRET` as an environment variable (giving tenant workloads visibility into the security bus), and mounted the security config volume. A compromised tenant workload could read the HMAC secret and forge signed telemetry, suppress its own FIM events, or kill the monitoring thread.
 
-### Baseline and Detection Artifacts
+The original architecture looked like this:
 
-* `scripts/compute_baseline.py` reads Zeek conn logs and writes `baselines/baseline.json`
-* `scripts/beaconing_detector.py` reads conn logs and emits beaconing alerts to JSON
-* `scripts/enforce_segment_iptables.sh` applies host-side segment boundaries with iptables
+```
+┌─────────────────────────────────────┐
+│  node_agent (RUNS AS ROOT)          │
+│  ├─ Telemetry collection (psutil)   │
+│  ├─ FIM via inotify                 │
+│  ├─ Config tamper detection         │
+│  ├─ Process kill enforcement        │
+│  ├─ Golden-copy file restore        │
+│  ├─ HMAC_SECRET in env              │
+│  └─ Built-in attack simulator       │  ← tenant container
+└──────────────┬──────────────────────┘
+               │ ZMQ :5555
+┌──────────────▼──────────────────────┐
+│  controller                         │
+│  6-gate security validator          │
+└──────────────┬──────────────────────┘
+               │ ZMQ :5556
+┌──────────────▼──────────────────────┐
+│  risk-engine                        │
+│  Scoring + Correlation + Remediation│
+└─────────────────────────────────────┘
+```
 
-These detections are rule-based and serve as a proof-of-concept implementation.
+The six controller security gates (HMAC verify, rogue node, replay guard, flood guard, impersonation, duplicate ID) were correctly placed. The problem was upstream: any tenant with the HMAC secret could craft a valid message that bypassed all of them.
 
 ---
 
-## Project Structure
+## 3. The Problem — Why It Was Refactored
 
-```text
-Always-On-Security/
-│
-├── controller/                 # Layer 2: Message Forwarder
-├── risk_engine/                # Layer 3/4: Central Processing & Remediation
-│   ├── config/                 # YAML configuration (rules, thresholds)
-│   └── ...python modules
-├── dashboard/
-│   ├── app.py
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   └── templates/
-│       └── index.html
-│
-├── security_monitor/
-│   ├── Dockerfile
-│   ├── start.sh
-│   ├── filebeat.yml
-│   ├── suricata/
-│   └── zeek/
-│
-├── node_agent/
-│   ├── agent.py
-│   ├── Dockerfile
-│   └── requirements.txt
-│
-├── scripts/
-│   ├── compute_baseline.py
-│   ├── beaconing_detector.py
-│   └── enforce_segment_iptables.sh
-│
-├── wazuh/
-│   ├── wazuh.py
-│   └── Dockerfile
-│
-├── baselines/
-├── data/                       # Shared SQLite Database
-│
-├── docker-compose.yml
-└── .gitignore
-```
+The core issue was a **trust boundary inversion**. In production HPC environments:
+
+- Tenant containers are **untrusted**. They run user workloads. They have no elevated privileges and no visibility into the monitoring infrastructure.
+- Security enforcement is performed **externally** by infrastructure-owned services that observe, correlate, and act on the cluster from outside the workload boundary.
+
+Specifically, the pre-refactor design violated the following production principles:
+
+| Violation | Impact |
+|---|---|
+| Security agents inside tenant containers | Tenant can observe/interfere with monitoring |
+| `HMAC_SECRET` passed to node1–node4 | Tenant can forge signed telemetry |
+| Containers run as root for FIM/kill | Unnecessary privilege in workload zone |
+| Process kill from within monitored container | Enforcer and subject share the same trust domain |
+| File restore from within monitored container | Tenant can predict and circumvent restoration logic |
+| Built-in attack simulator in production code | Demo artifact with no place in a real deployment |
 
 ---
 
-## Prerequisites
+## 4. The Refactored Architecture
 
-Install the following:
+The refactor re-draws the trust boundary. The system now has two clearly separated zones:
 
-### Ubuntu / Linux (Native)
+- **Infrastructure Zone** — services that observe, analyse, and enforce. Trusted. Some run privileged.
+- **Workload Zone** — tenant containers. Untrusted. No security agents, no secrets, no root.
 
-```bash
-sudo apt update
-sudo apt install git docker.io docker-compose-plugin -y
+### Architecture Diagram
+
+```
+  INFRASTRUCTURE ZONE
+  ┌────────────────────────────────────────────────────────────────────┐
+  │                                                                    │
+  │  ┌──────────────────────┐    ┌────────────────────────────────┐   │
+  │  │   HOST OBSERVER      │    │      SECURITY MONITOR          │   │
+  │  │  (cluster_observer)  │    │                                │   │
+  │  │                      │    │  docker_collector  ──┐         │   │
+  │  │  Docker stats API    │    │  network_collector ──┤         │   │
+  │  │  Docker top API      │    │  threat_correlator   │         │   │
+  │  │  Docker archive API  │    │  policy_engine   ────┤         │   │
+  │  │  (FIM, no exec)      │    │  event_forwarder ────┘         │   │
+  │  │                      │    │                                │   │
+  │  │  Process policy check│    │  Suricata (NIDS)               │   │
+  │  │  Config tamper check │    │  Zeek (behavioural)            │   │
+  │  └──────────┬───────────┘    └──────────────┬─────────────────┘   │
+  │             │                               │                     │
+  │             │ ZMQ :5555 (HMAC-signed)       │ ZMQ :5555           │
+  │             └───────────────┬───────────────┘                     │
+  │                             ▼                                     │
+  │                  ┌──────────────────────┐                         │
+  │                  │      CONTROLLER      │                         │
+  │                  │                      │                         │
+  │                  │  1. HMAC verify      │                         │
+  │                  │  2. Rogue node       │                         │
+  │                  │  3. Replay guard     │                         │
+  │                  │  4. Flood guard      │                         │
+  │                  │  5. Impersonation    │                         │
+  │                  │  6. Duplicate ID     │                         │
+  │                  └──────────┬───────────┘                         │
+  │                             │ ZMQ :5556                           │
+  │                             ▼                                     │
+  │                  ┌──────────────────────┐                         │
+  │                  │     RISK ENGINE      │                         │
+  │                  │                      │                         │
+  │                  │  Weighted Scoring    │──► SQLite (events.db)   │
+  │                  │  Risk Decay          │                         │
+  │                  │  Cross-node Corr.    │                         │
+  │                  │  Heartbeat Monitor   │                         │
+  │                  │  Enforcement Router  │──► Docker API           │
+  │                  │  Alert Manager       │──► Wazuh (UDP)          │
+  │                  └──────────────────────┘                         │
+  │                                                                    │
+  │                  ┌──────────────────────┐                         │
+  │                  │     DASHBOARD        │                         │
+  │                  │  Flask + SQLite      │                         │
+  │                  │  localhost:5000      │                         │
+  │                  └──────────────────────┘                         │
+  └────────────────────────────────────────────────────────────────────┘
+
+  WORKLOAD ZONE  (no HMAC secret, no security agents, no root)
+  ┌──────────────────────────────────────────────────────────────────┐
+  │  node1    node2    node3    node4                                 │
+  │  (customer workload only — no psutil, no inotify, no ZMQ)       │
+  └──────────────────────────────────────────────────────────────────┘
+
+  NETWORK SEGMENTS
+  compute-net  10.10.1.0/24  (east-west node traffic, internal)
+  storage-net  10.10.2.0/24  (shared storage traffic, internal)
+  mgmt-net     10.10.3.0/24  (control plane + monitoring, internal)
 ```
 
-### Windows with WSL (Docker Desktop)
+### What Changed in Each Component
 
-Install [Docker Desktop for Windows](https://www.docker.com/products/docker-desktop/) and enable WSL integration in:
-`Settings → Resources → WSL Integration → Enable your distro`
+#### `node_agent/` — stripped to workload only
 
-### Verify Installation
+Before: root-privileged container running psutil, inotify FIM, process kill, file restore, attack simulator, ZMQ send, HMAC signing.
 
-```bash
-docker --version
-docker compose version
-git --version
+After: a minimal Python loop that simulates a steady-state workload. No security logic, no elevated privileges, no secrets, no ZMQ socket.
+
+```python
+# Everything that's left in node_agent/agent.py after refactoring
+while True:
+    res = sum(range(100000))   # simulate workload
+    time.sleep(5)
 ```
 
----
+The Dockerfile drops to a non-root `appuser` (UID 10001). No capabilities are added. No config volumes are mounted. `HMAC_SECRET` is not passed.
 
-## Clone Repository
+#### `host_observer/` — new service
 
-```bash
-git clone <repository-url>
-cd Always-On-Security
+A new privileged infrastructure service (`cluster_observer.py`) takes over everything the node agent used to do from inside the container, but does it externally:
+
+- **Resource telemetry**: Docker stats API → CPU %, memory % (cgroup-accurate, no psutil inside tenant)
+- **Process inspection**: Docker `container.top()` → process count and command names checked against `process_policy.yaml`
+- **FIM**: Docker `container.get_archive()` → streams the raw file bytes out of the overlay FS, computes SHA-256, compares against baseline — **no exec, no process inside tenant**
+- **Signing**: produces HMAC-SHA256-signed telemetry and sends to Controller via ZMQ
+
+#### `security_monitor/` — evolved from passive runner to active pipeline
+
+Before: a bash `start.sh` launcher that started Suricata and Zeek and had no Python logic.
+
+After: a 5-module Python pipeline supervised by `main.py`:
+
+| Module | Role |
+|---|---|
+| `docker_collector.py` | Subscribes to Docker event stream; emits container lifecycle events |
+| `network_collector.py` | Tails Suricata EVE JSON and Zeek notice/conn logs; normalises records |
+| `threat_correlator.py` (was `threat_correlator`) | Joins Docker events with network signals; assigns confidence scores |
+| `policy_engine.py` | Evaluates fast-path enforcement rules from YAML; acts via Docker API without waiting for score accumulation |
+| `event_forwarder.py` | Signs correlated events with HMAC and sends to Controller via ZMQ |
+
+The `policy_engine` can take immediate action (stop, pause, or network-isolate) for critical signals like `ROGUE_NODE`, `NODE_IMPERSONATION`, or `CONFIG_TAMPER` — bypassing the cumulative scoring path entirely.
+
+#### `controller/` — unchanged in logic, now correctly fed
+
+The six-gate security validator is the same. What changed is where its input comes from: previously node agents (tenant-zone); now only infrastructure-zone services (Host Observer and Security Monitor), neither of which holds tenant-accessible secrets.
+
+#### `docker-compose.yml` — trust boundary enforced in configuration
+
+The compose file now documents the two zones explicitly. Node containers receive zero security configuration:
+
+```yaml
+# node1 — Workload Zone
+node1:
+  environment:
+    - NODE_NAME=node1   # only this — no HMAC_SECRET, no config paths
+  # no volumes, no capabilities added, no docker.sock
 ```
 
----
+Versus infrastructure services:
 
-## Start the System
-
-Before starting the system for the first time, you must generate the baseline configuration hashes and the `.env` file containing the HMAC secret:
-
-```bash
-python3 generate_baseline.py
-```
-
-Build and start all services:
-
-```bash
-docker compose up --build -d
-```
-
-The following containers will start across the segmented Docker networks:
-
-* `controller`
-* `risk-engine`
-* `dashboard`
-* `node1`, `node2`, `node3`, `node4`
-* `wazuh`
-* `security-monitor`
-
----
-
-## Access Dashboard
-
-Open your browser and go to:
-
-```text
-http://localhost:5000
-```
-
-You should see:
-
-* Event statistics
-* Node risk scores
-* Recent security events
-* System activity feed
-
----
-
-## Generate a Test Alert
-
-**Method 1: Automatic (Built-in Simulator)**
-The node agents include a built-in threat simulator that will automatically trigger every few minutes (`node1` has a higher chance). Simply watch the dashboard to see an attack escalate through 4 stages and end in quarantine.
-
-**Method 2: Manual Trigger**
-Open a shell inside a node:
-
-```bash
-docker exec -it node1 bash
-```
-
-Generate high CPU usage:
-
-```bash
-yes > /dev/null
-```
-
-This should trigger:
-
-* High CPU detection
-* Risk score increase
-* Event creation
-* Dashboard updates
-* Node quarantine (when risk ≥ 100)
-* Wazuh alert (when node is quarantined)
-
-## Network Threat Tests
-
-The network monitor is designed for the Docker-only HPC simulation, so the easiest tests are container-to-container traffic patterns.
-
-* Port scan: run a simple port sweep from one container against another container's IP on `compute-net` or `storage-net`.
-* Unauthorized communication: send traffic from a compute container directly to the management segment.
-* Lateral movement: SSH from one node to another, then chain into a third node.
-* Beaconing: generate repeated low-byte, fixed-interval connections between the same pair of containers.
-* ICMP tunnel / protocol abuse: send large ICMP payloads or mismatched protocol traffic through Suricata-monitored paths.
-
-Expected outputs:
-
-* Suricata EVE JSON notice for port scans and ICMP tunnel patterns
-* Zeek notice for unauthorized pairs, fan-out, hop chains, and protocol mismatches
-* Python baseline JSON in `baselines/`
-
-Stop the process:
-
-```bash
-CTRL + C
-```
-
-**Method 3: Advanced Node Attacks**
-
-You can also test the newly added cryptographic and node-level detectors:
-
-**1. Config Tampering (Triggers `CONFIG_TAMPER` alert)**
-Modify a monitored configuration file on a running node:
-```bash
-docker exec node1 sh -c "echo '1.2.3.4 evil.com' >> /etc/hosts"
-```
-
-**2. Rogue Node Injection (Triggers `ROGUE_NODE` alert)**
-Launch an unauthorized node connecting to the controller. *Note: this requires the `.env` file to be present to grab the HMAC secret.*
-```bash
-docker run --rm --network always-on-security_security_net \
-  -e NODE_NAME=rogue99 \
-  -e HMAC_SECRET=$(grep HMAC_SECRET .env | cut -d= -f2) \
-  always-on-security-node1
-```
-
-**3. Telemetry Tampering / Replay Attacks**
-Since all messages are cryptographically signed with HMAC-SHA256, sending raw JSON via `netcat` will be rejected by the Controller. To test `REPLAY_ATTACK` or `TELEMETRY_TAMPER`, you must extract the `HMAC_SECRET` from `.env` and write a custom python script using `pyzmq` to sign and send duplicate `msg_id`s or modify payloads post-signing.
-
----
-
-## Useful Commands
-
-```bash
-docker compose logs -f              # Stream all logs
-docker compose logs -f risk-engine  # Stream risk-engine logs only
-docker ps                           # Show status of all containers
-docker compose down                 # Stop and clean up the environment
+```yaml
+# host-observer — Infrastructure Zone
+host-observer:
+  environment:
+    - HMAC_SECRET=${HMAC_SECRET}
+    - CONTROLLER_URL=tcp://controller:5555
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - ./risk_engine/config:/opt/security/config:ro
 ```
 
 ---
 
-## Capabilities Demonstrated
+## 5. Component Reference
 
-* Distributed container monitoring
-* Real-time event collection via ZeroMQ
-* Risk analysis and scoring
-* Automated remediation via Docker API
-* Dashboard visualization with Flask + SQLite
-* Mock SIEM integration (Wazuh)
+### Network Segments
 
-### Advanced Security Enhancements (Recent PR/Merge)
+| Network | Subnet | Purpose |
+|---|---|---|
+| `compute-net` | 10.10.1.0/24 | East-west node traffic; `internal: true` |
+| `storage-net` | 10.10.2.0/24 | Shared storage access; `internal: true` |
+| `mgmt-net` | 10.10.3.0/24 | Control plane, monitoring, dashboard; `internal: true` |
 
-The core monitoring architecture has been significantly hardened to simulate an air-gapped, always-on HPC security environment. This update shifts the project from a simple telemetry dashboard to an active threat-defense system. Key additions include:
+`security-monitor` is attached to all three segments to enable full traffic inspection. Tenant nodes are attached to one compute or storage segment plus mgmt.
 
-* **1. Cryptographic Telemetry Protocol (`node_agent/secure_messenger.py`)**
-  All inter-node communication over ZeroMQ is now signed with an ephemeral HMAC-SHA256 signature. A shared `.env` secret prevents unauthorized actors from injecting fake telemetry or tampering with resource usage metrics in transit.
+### Service Map
 
-* **2. Six-Tier Controller Security Gate (`controller/controller.py`)**
-  The central message broker now acts as a hardened security gate. Before forwarding any event to the Risk Engine, it runs 6 distinct checks:
-  - **HMAC Verification:** Rejects tampered payloads.
-  - **ReplayGuard:** Drops duplicated `msg_id`s within a sliding time window.
-  - **FloodGuard:** Enforces rate-limiting to prevent DoS via telemetry flooding.
-  - **Rogue Node Detection:** Blocks traffic from unrecognized `machine_id`s.
-  - **Impersonation Checks:** Flags nodes trying to spoof trusted identities.
+| Container | Zone | IP (mgmt-net) | Key capabilities |
+|---|---|---|---|
+| `controller` | Infrastructure | 10.10.3.10 | HMAC_SECRET, config:ro |
+| `risk-engine` | Infrastructure | 10.10.3.11 | NET_ADMIN, docker.sock:ro |
+| `dashboard` | Infrastructure | 10.10.3.20 | shared_data:ro |
+| `host-observer` | Infrastructure | 10.10.3.12 | docker.sock:ro, HMAC_SECRET |
+| `wazuh` | Infrastructure | 10.10.3.40 | mock SIEM |
+| `security-monitor` | Infrastructure | 10.10.3.250 | privileged, NET_ADMIN, NET_RAW, HMAC_SECRET |
+| `node1–node4` | Workload | 10.10.3.21–31 | none — unprivileged appuser |
 
-* **3. Node-Level Threat Collection (`node_agent/security_collector.py`)**
-  Agents now run a dedicated third thread (`SecurityCollector`) that actively monitors the host for compromise:
-  - **Config Tampering:** Hashes critical system files (`/etc/hosts`, `/etc/passwd`) against a generated baseline (`config_hashes.yaml`).
-  - **Lateral Movement:** Scans active TCP connections for unexpected outbound SSH activity.
-  - **Process Policy Enforcement:** Monitors running processes against an explicit allowlist/denylist.
-
-* **4. Unified Threat Engine (`risk_engine/threat_detector.py` & `alert_manager.py`)**
-  The Risk Engine now integrates 10 advanced threat detectors (Rogue Node, Impersonation, Silent Node Timeout, etc.) directly into the cumulative scoring pipeline. Threats are categorized by severity (INFO to CRITICAL) and persisted in a new `security_alerts` SQLite table.
-
-* **5. Dark-Mode Security Dashboard (`dashboard/templates/index.html`)**
-  The UI was completely overhauled into a modern, dark-mode security operations center (SOC). It features live-updating SVG threat distribution charts, node trust badges (TRUSTED vs ROGUE), protocol integrity counters, and an XSS-safe dynamic alert feed.
-
----
-
-## Build-Time Security (CI/CD Pipeline)
-
-Layer 1 of the Always-On Security architecture — shift-left enforcement before any code reaches production.
-
-### What Was Added
+### Risk Engine Config (`risk_engine/config/`)
 
 | File | Purpose |
-|------|---------|
-| `.github/workflows/build-time-security.yml` | 10-job security pipeline triggered on every push and PR |
-| `.github/workflows/sbom.yml` | SBOM generation on every merge to `main` |
-| `.gitleaks.toml` | Secret detection allowlist (HMAC variable refs, FIM integrity hashes) |
-| `.yamllint.yml` | YAML linting config for `risk_engine/config/` and `docker-compose.yml` |
-| `.checkov.yaml` | IaC skip list for intentional privileged/socket findings |
-| `node_agent/requirements.txt` | Pinned dependencies (was inline in Dockerfile) |
-| `*/`.dockerignore` (×6)` | Excludes `.env`, `data/`, `__pycache__/` from all build contexts |
+|---|---|
+| `rules.yaml` | Rule definitions with severity and blast-radius weights |
+| `thresholds.yaml` | Score thresholds for each enforcement bucket |
+| `allowlist.yaml` | Authorised node names and machine IDs |
+| `process_policy.yaml` | Denylist / allowlist of process names |
+| `node_criticality.yaml` | Per-node criticality multipliers |
+| `fast_path_policy.yaml` | Immediate enforcement rules for Policy Engine |
+| `config_hashes.yaml` | SHA-256 baselines for monitored config files |
+
+---
+
+## 6. Security Detection Coverage
+
+| Threat | Detection Owner | Enforcement Owner | Mechanism |
+|---|---|---|---|
+| High CPU/memory/process count | Host Observer | Risk Engine | Docker stats + scoring |
+| Suspicious process (denylist) | Host Observer | Risk Engine / Policy Engine | `container.top()` vs `process_policy.yaml` |
+| Config file tamper (FIM) | Host Observer | Risk Engine / Policy Engine | `container.get_archive()` SHA-256 vs baseline |
+| HMAC failure (telemetry tamper) | Controller | Controller (drop) + Risk Engine (alert) | HMAC-SHA256 verify |
+| Rogue node (unknown machine_id) | Controller | Policy Engine (fast-path stop) | Allowlist check |
+| Replay attack | Controller | Controller (drop) + Risk Engine (alert) | Sliding window + seq monotonicity |
+| Message flooding | Controller | Controller (alert) | Rate window counter |
+| Node impersonation | Controller | Policy Engine (fast-path stop) | machine_id change detection |
+| Silent node (heartbeat timeout) | Risk Engine | Risk Engine (alert) | 30s telemetry gap |
+| Cross-node coordinated attack | Risk Engine | Risk Engine (score multiplier) | 3+ node correlation |
+| Port scan / protocol abuse | Security Monitor (Suricata) | Policy Engine | EVE JSON signature match |
+| Lateral movement | Security Monitor (Zeek) | Policy Engine | conn.log + notice.log |
+| Beaconing | Security Monitor (Zeek / scripts) | Risk Engine | Low-variance interval detection |
+| Container lifecycle anomaly | Security Monitor (docker_collector) | Policy Engine | Docker event stream |
+| Network fan-out excess | Security Monitor (Zeek) | Policy Engine (network_isolate) | conn.log peer count |
+
+### Enforcement Repertoire
+
+| Action | Trigger | Mechanism |
+|---|---|---|
+| **Stop container** | Score ≥ quarantine threshold or fast-path CRITICAL | `container.stop()` via Docker API |
+| **Pause container** | Lateral movement, moderate-severity fast-path | `container.pause()` via Docker API |
+| **Network isolate** | Fan-out excess, high-confidence network threat | Docker `network.disconnect()` from compute-net + storage-net; mgmt-net preserved for forensics |
+| **Wazuh alert** | Any quarantine event | UDP syslog to mock SIEM at 10.10.3.40 |
+
+No enforcement action modifies files, kills processes, or alters any state **inside** a tenant container. This is the central invariant of the production enforcement model.
+
+---
+
+## 7. File Integrity Monitoring (FIM)
+
+FIM moved out of the tenant container's inotify thread and into the Host Observer's external inspection loop.
+
+### How it works now
+
+1. `cluster_observer.py` calls `container.get_archive(file_path)` — this is Docker's `cp` API, which streams a tar of the file directly from the container's overlay FS. No process runs inside the tenant.
+2. The archive is unpacked in memory, and SHA-256 is computed on the streamed bytes.
+3. The hash is compared against the baseline in `config_hashes.yaml` (generated at startup by `generate_baseline.py`). If no pre-defined baseline exists, the first observed hash is recorded and used going forward.
+4. On a mismatch, a `FIM_EVENT` payload is constructed and signed with HMAC, then sent to the Controller.
+5. The Risk Engine matches the event against FIM rules in `rules.yaml` and places a **5-minute decay hold** on the node — preventing the risk score from self-healing while the tamper remains under investigation.
+
+### FIM Rules
+
+| Rule | Severity | Blast Radius |
+|---|---|---|
+| `FIM_FILE_CREATED` | 40 | 35 |
+| `FIM_FILE_MODIFIED` | 50 | 40 |
+| `FIM_PERMISSION_CHANGED` | 60 | 45 |
+| `FIM_FILE_DELETED` | 70 | 50 |
+| `FIM_BASELINE_TAMPERING` | 90 | 60 |
+
+Files currently monitored: `/etc/hosts`, `/etc/passwd`, `/etc/ssh/sshd_config`.
+
+---
+
+## 8. Build-Time Security Pipeline
+
+Two GitHub Actions workflows enforce shift-left security on every push and pull request.
 
 ### Pipeline Stages
 
 ```
 Push / PR
     │
-    ├── Stage 1 (blocking, serial)
-    │   ├── secret-detection   GitLeaks — full git history scan
-    │   └── yaml-validation    yamllint + PyYAML safe_load on all configs
+    ├── Stage 1 — Blocking, serial
+    │   ├── secret-detection    GitLeaks full history scan
+    │   └── yaml-validation     yamllint + PyYAML safe_load on all configs
     │
-    ├── Stage 2 (blocking, parallel)
-    │   ├── sast-bandit        Python SAST — blocks on HIGH severity
-    │   ├── sast-semgrep       p/python + p/secrets + p/owasp-top-ten
-    │   └── shellcheck         Shell script linting (advisory)
+    ├── Stage 2 — Blocking, parallel
+    │   ├── sast-bandit         Python SAST; blocks on HIGH severity
+    │   ├── sast-semgrep        p/python + p/secrets + p/owasp-top-ten
+    │   └── shellcheck          Shell script linting (advisory)
     │
-    ├── Stage 3 (blocking, parallel)
-    │   └── sca-pip-audit      CVE scan on all requirements.txt files
+    ├── Stage 3 — Blocking, parallel
+    │   └── sca-pip-audit       CVE scan across all requirements.txt files
     │
-    ├── Stage 4 (advisory, parallel)
-    │   ├── hadolint           Dockerfile best-practice linting
-    │   ├── checkov            docker-compose.yml IaC scan
-    │   └── trivy              Filesystem CVE scan (blocks on CRITICAL)
+    ├── Stage 4 — Advisory, parallel
+    │   ├── hadolint            Dockerfile best-practice lint
+    │   ├── checkov             docker-compose.yml IaC scan
+    │   └── trivy               Filesystem CVE scan (blocks on CRITICAL)
     │
-    └── Security Gate          Final pass/fail verdict for branch protection
+    └── Security Gate           Final pass/fail for branch protection
 ```
 
-### Codebase Fixes (Person B track)
-
-- **Dependency pinning** — all `requirements.txt` files pinned to exact versions; `pip-audit` reports zero CVEs
-- **`# nosec B108/B103`** — suppressed on intentional `/tmp` fallback path and attack simulator `chmod` with justification comments
-- **`# nosemgrep`** — suppressed on Flask `0.0.0.0` binding, mock SIEM `socket.bind`, and attack simulator `chmod`; all with exact rule IDs
-- **`.dockerignore`** — added to all 6 service directories; `.env` can no longer be accidentally included in a Docker image layer
+On every merge to `main`, a second workflow (`sbom.yml`) generates a software bill of materials using Syft.
 
 ### Compliance Mapping
 
 | Check | NIST SP 800-234 | CIS Controls |
-|-------|----------------|--------------|
+|---|---|---|
 | GitLeaks | SC-12, SC-13 | CIS 3.11, 4.1 |
 | YAML validation | CM-2, CM-6 | CIS 4.1 |
 | Bandit / Semgrep | SA-11, SI-7 | CIS 16.1, 16.4 |
@@ -413,9 +398,150 @@ Push / PR
 | Trivy | RA-5, SI-2 | CIS 7.1, 7.3 |
 | SBOM (Syft) | SA-12 | CIS 2.1 |
 
-### Known Gaps (Tracked as Issues)
+---
 
-- HMAC\_SECRET passed as plain env var — should migrate to Docker secrets (REC-11)
-- Docker base images use floating tags (`python:3.11-slim`) — should pin to digest (DL3007)
-- No non-root `USER` instruction in Dockerfiles — containers run as root (DL3002)
-- No `HEALTHCHECK` in any Dockerfile (CKV\_DOCKER\_2)
+## 9. Getting Started
+
+### Prerequisites
+
+```bash
+# Ubuntu / Debian
+sudo apt update
+sudo apt install git docker.io docker-compose-plugin -y
+
+# Verify
+docker --version
+docker compose version
+```
+
+For Windows, install [Docker Desktop](https://www.docker.com/products/docker-desktop/) and enable WSL integration.
+
+### Setup
+
+Clone the repo and generate the HMAC secret and config baselines:
+
+```bash
+git clone <repository-url>
+cd Always-On-Security
+python3 generate_baseline.py
+```
+
+This creates a `.env` file containing `HMAC_SECRET` and populates `risk_engine/config/config_hashes.yaml` with baseline SHA-256 hashes of the monitored config files.
+
+### Start
+
+```bash
+docker compose up --build -d
+```
+
+Containers started:
+
+| Container | Role |
+|---|---|
+| `controller` | Message security gate |
+| `risk-engine` | Scoring, correlation, enforcement |
+| `dashboard` | Web UI at localhost:5000 |
+| `host-observer` | External telemetry and FIM collection |
+| `node1`, `node2`, `node3`, `node4` | Tenant workloads |
+| `wazuh` | Mock SIEM |
+| `security-monitor` | Suricata + Zeek + Python pipeline |
+
+### Access Dashboard
+
+```
+http://localhost:5000
+```
+
+The dashboard shows:
+- Per-node risk scores and trust status (TRUSTED / ROGUE)
+- Live threat distribution chart (SVG, auto-refreshing)
+- Recent security events feed with FIM details
+- Protocol integrity counters (HMAC failures, replay attempts)
+
+### Useful Commands
+
+```bash
+docker compose logs -f                 # Stream all logs
+docker compose logs -f risk-engine     # Risk engine only
+docker compose logs -f host-observer   # External telemetry collector
+docker compose logs -f security-monitor # Network pipeline
+docker ps                              # Container status
+docker compose down                    # Stop and clean up
+```
+
+---
+
+## 10. Testing & Simulation
+
+The built-in attack simulator has been removed from the tenant containers. Threats are now injected externally, which is both more realistic and safer.
+
+### Resource Anomaly
+
+Trigger high CPU from outside the container:
+
+```bash
+# Run a stress process inside a node — this is now the *only* thing
+# an attacker can do from the workload zone (they have no security visibility)
+docker exec -it node1 bash -c "yes > /dev/null &"
+```
+
+The Host Observer will detect the CPU spike via Docker stats and send a scored event to the Risk Engine.
+
+### Config Tamper (FIM)
+
+```bash
+# Modify a monitored file from outside the container
+docker exec node1 sh -c "echo '1.2.3.4 evil.com' >> /etc/hosts"
+```
+
+The Host Observer will detect the SHA-256 mismatch on the next poll cycle and generate a `FIM_FILE_MODIFIED` event.
+
+### Rogue Node Injection
+
+```bash
+docker run --rm --network always-on-security_mgmt-net \
+  -e NODE_NAME=rogue99 \
+  always-on-security-node1
+```
+
+The Controller rejects the message (node not in allowlist) and forwards a `ROGUE_NODE` alert to the Risk Engine. The Policy Engine triggers a fast-path stop.
+
+### Network Threat Tests
+
+The Security Monitor inspects all three network segments. Effective test patterns:
+
+```bash
+# Port scan — triggers Suricata EVE JSON alert
+docker exec node2 nmap -sS 10.10.1.0/24
+
+# Lateral movement — SSH hop between compute nodes
+docker exec node1 ssh 10.10.1.22
+
+# Beaconing — fixed-interval, low-byte connections
+# (use scripts/beaconing_detector.py to analyse conn logs)
+
+# Unauthorized segment crossing — compute node to mgmt-net target
+docker exec node1 curl http://10.10.3.10
+```
+
+Expected outputs: Suricata EVE JSON notice, Zeek notice.log entry, Risk Engine alert, Policy Engine enforcement action.
+
+### Replay Attack
+
+Send a previously seen message with a duplicate `msg_id`. The Controller's `ReplayGuard` will reject it within the sliding window and forward a `REPLAY_ATTACK` alert downstream.
+
+---
+
+## 11. Known Gaps
+
+These are tracked issues for future hardening:
+
+| Issue | Category | Notes |
+|---|---|---|
+| `HMAC_SECRET` passed as plain env var | Secret management | Should migrate to Docker secrets or a secrets manager |
+| Base images use floating tags (`python:3.11-slim`) | Supply chain | Should pin to image digest to prevent tag mutation |
+| No `USER` instruction in some Dockerfiles | Privilege | Some containers still run as root; tracked under REC-01 / REC-02 |
+| No `HEALTHCHECK` in Dockerfiles | Availability | Docker cannot auto-restart unhealthy containers |
+| `security-monitor` requires `privileged: true` | Attack surface | Acceptable for Infrastructure Zone (Suricata/Zeek need raw packet capture); not present in Workload Zone |
+| Host Observer polls every 5 seconds | Detection latency | Near-real-time; not kernel-event-driven |
+| Docker socket mounted read-only, not proxied | API surface | A Docker socket proxy (`docker-socket-proxy`) would further restrict the API surface exposed to each container |

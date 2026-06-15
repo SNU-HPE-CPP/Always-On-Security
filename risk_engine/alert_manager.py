@@ -167,7 +167,7 @@ class AlertManager:
             return None
 
         signal = ThreatSignal(
-            node_id     = event.get("node", "unknown"),
+            node_id     = event.get("node_id") or event.get("node", "unknown"),
             threat_type = event.get("threat_type", "UNKNOWN"),
             severity    = event.get("severity", "MEDIUM"),
             description = event.get("description", ""),
@@ -175,6 +175,7 @@ class AlertManager:
             recommended_action = event.get("recommended_action", ""),
         )
         return self.emit(signal)
+
 
     # ── Private ───────────────────────────────────
 
