@@ -1,6 +1,7 @@
 import logging
 import socket
 import json
+import subprocess
 
 log = logging.getLogger(__name__)
 
@@ -101,14 +102,42 @@ class Router:
     def _pause(self, node: str) -> None:
         client = self._get_docker()
         if client is None:
-            log.error(f"Cannot pause {node}: Docker unavailable")
+            log.error(f"Cannot isolate {node}: Docker unavailable")
             return
         try:
             container = client.containers.get(node)
-            container.pause()
-            log.warning(f"Node {node} paused for human review")
+            container.reload()
+            networks = container.attrs.get("NetworkSettings", {}).get("Networks", {})
+            mgmt_network = networks.get("mgmt-net")
+            if mgmt_network and mgmt_network.get("IPAddress"):
+                container_ip = mgmt_network["IPAddress"]
+            else:
+                container_ip = next(
+                    (
+                        details.get("IPAddress")
+                        for details in networks.values()
+                        if details.get("IPAddress")
+                    ),
+                    None,
+                )
+
+            if not container_ip:
+                log.error(f"Cannot isolate {node}: no container IP found")
+                return
+
+            drop_rule = ["iptables", "-C", "FORWARD", "-s", container_ip, "-j", "DROP"]
+            insert_rule = ["iptables", "-I", "FORWARD", "-s", container_ip, "-j", "DROP"]
+
+            check_result = subprocess.run(drop_rule, capture_output=True, text=True)
+            if check_result.returncode != 0:
+                subprocess.run(insert_rule, check=True)
+
+            log.warning(
+                f"Node {node} isolated with iptables DROP rule "
+                f"(container_ip={container_ip})"
+            )
         except Exception as e:
-            log.error(f"Pause failed for {node}: {e}")
+            log.error(f"Isolation failed for {node}: {e}")
 
     def _quarantine(self, node: str) -> None:
 
@@ -121,6 +150,11 @@ class Router:
         try:
 
             container = client.containers.get(node)
+
+            container.reload()
+            if container.status in {"exited", "dead", "removing"}:
+                log.info(f"Node {node} is already stopped; skipping quarantine")
+                return
 
             container.stop()
 
