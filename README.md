@@ -474,6 +474,7 @@ docker run --rm --network always-on-security_mgmt-net \
 # → ROGUE_NODE alert, node blacklisted, fast-path stop
 ```
 
+The Controller rejects the message (node not in allowlist), dynamically appends the node name to `/data/rogue_blacklist.yaml`, and forwards a single `ROGUE_NODE` alert to the Risk Engine (where the Policy Engine triggers a fast-path stop). Any subsequent messages from this rogue node are silently dropped by the Controller to prevent alert flooding.
 ### Replay Attack
 
 Send a previously seen message with a duplicate `msg_id`. The Controller's `ReplayGuard` rejects it and forwards a `REPLAY_ATTACK` alert downstream.
