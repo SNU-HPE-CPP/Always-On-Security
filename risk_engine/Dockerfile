@@ -17,18 +17,44 @@ RUN groupadd -g ${DOCKER_GID} docker && \
 
 WORKDIR /app
 
+# Build context is the repo root (set in docker-compose.yml).
+# risk_engine/requirements.txt and *.py live under risk_engine/
 COPY risk_engine/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY risk_engine/*.py ./
-COPY risk_engine/config/ ./config/
 
-RUN chown -R appuser:appgroup /app
-
-# Entrypoint: fix /data ownership (named volume is created as root) then drop privileges
-COPY risk_engine/entrypoint.sh /entrypoint.sh
+# ── REC-08: Pre-flight config integrity check ─────────────────────────────
+# scripts/ is directly accessible from the repo-root build context.
+COPY scripts/check_config_integrity.py ./check_config_integrity.py
+COPY scripts/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Keep root for entrypoint; it drops to appuser after chown
+# Label the service for audit records
+ENV SERVICE_NAME=risk-engine
+
+# Allow first-deployment without a manifest (set to false once baseline is committed)
+ENV INTEGRITY_ALLOW_MISSING_MANIFEST=true
+
+# ── Security: non-root user ────────────────────────────────────────────────
+# Semgrep: dockerfile.security.missing-user-entrypoint (DL3002 / CKV_DOCKER_8)
+#
+# The risk-engine performs two privileged operations at runtime:
+#   1. Docker API calls (container.stop / inspect) via /var/run/docker.sock
+#      → handled by adding appuser to the 'docker' group (GID 999).
+#   2. iptables DROP rules for node isolation (_pause action)
+#      → handled by granting CAP_NET_ADMIN in docker-compose.yml.
+#
+# GID 999 is the standard Docker socket group on Debian/Ubuntu/RHEL hosts.
+# If your host uses a different GID, override with:
+#   docker compose run --group-add <host-docker-gid> risk-engine ...
+RUN groupadd -r appgroup \
+ && groupadd -f -g 999 docker \
+ && useradd -r -g appgroup -G docker -u 1000 -d /app -s /sbin/nologin appuser \
+ && mkdir -p /data/integrity_audits /data/forensics \
+ && chown -R appuser:appgroup /data /app
+
+USER appuser
+
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python", "engine.py"]

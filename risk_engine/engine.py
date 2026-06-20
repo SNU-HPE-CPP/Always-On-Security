@@ -110,7 +110,7 @@ def main():
             f"{CONFIG}/thresholds.yaml",
             f"{CONFIG}/node_criticality.yaml",
         ),
-        router    = Router.from_yaml(f"{CONFIG}/thresholds.yaml"),
+        router    = Router.from_yaml(f"{CONFIG}/thresholds.yaml", store=store),
     )
 
     threat_detector = ThreatDetector(store)

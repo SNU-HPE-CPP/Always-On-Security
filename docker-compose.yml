@@ -34,12 +34,23 @@ services:
     build:
       context: .
       dockerfile: controller/Dockerfile
+    build:
+      context: .
+      dockerfile: controller/Dockerfile
     container_name: controller
     environment:
       - HMAC_SECRET=${HMAC_SECRET}
       - ALLOWLIST_PATH=/opt/security/config/allowlist.yaml
+      # ── REC-08: Pre-flight integrity check ──────────────────────────
+      - SERVICE_NAME=controller
+      - CONFIG_HASHES_PATH=/opt/security/config/config_hashes.yaml
+      - CONFIG_DIR=/opt/security/config
+      - INTEGRITY_AUDIT_DIR=/data/integrity_audits
+      - INTEGRITY_ALLOW_MISSING_MANIFEST=${INTEGRITY_ALLOW_MISSING_MANIFEST:-true}
+      - INTEGRITY_STRICT=${INTEGRITY_STRICT:-false}
     volumes:
       - shared_data:/data
+      - integrity_audits:/data/integrity_audits
       - ./risk_engine/config:/opt/security/config:ro
     networks:
       mgmt-net:
@@ -52,13 +63,29 @@ services:
       args:
         DOCKER_GID: "963"
     container_name: risk-engine
+    # ── Security: capabilities required for non-root enforcement actions ──
+    # CAP_NET_ADMIN: allows appuser (UID 1000) to manage iptables DROP rules
+    #                for node isolation without running as root (DL3002 fix).
+    cap_add:
+      - NET_ADMIN
     environment:
       - ALLOWLIST_PATH=/opt/security/config/allowlist.yaml
+      # ── REC-08: Pre-flight integrity check ──────────────────────────
+      - SERVICE_NAME=risk-engine
+      - CONFIG_HASHES_PATH=/opt/security/config/config_hashes.yaml
+      - CONFIG_DIR=/opt/security/config
+      - INTEGRITY_AUDIT_DIR=/data/integrity_audits
+      - INTEGRITY_ALLOW_MISSING_MANIFEST=${INTEGRITY_ALLOW_MISSING_MANIFEST:-true}
+      - INTEGRITY_STRICT=${INTEGRITY_STRICT:-false}
+      # ── REC-09: Forensic capture directory ──────────────────────────
+      - FORENSICS_DIR=/data/forensics
       - DOCKER_HOST=tcp://docker-socket-proxy:2375
     cap_add:
       - NET_ADMIN
     volumes:
       - shared_data:/data
+      - integrity_audits:/data/integrity_audits
+      - forensics:/data/forensics
       - ./risk_engine/config:/opt/security/config:ro
     depends_on:
       - controller
@@ -283,4 +310,11 @@ networks:
 
 volumes:
   shared_data:
-  falco_logs:
+  # ── REC-08: Persistent integrity audit records ──────────────────────────
+  # Stores JSON audit records from every pre-flight check run.
+  # Mount this volume or copy files out to retain evidence across rebuilds.
+  integrity_audits:
+  # ── REC-09: Pre-quarantine forensic artifacts ────────────────────────────
+  # Each quarantine event writes a JSON file here: {node}_{trigger}_{ts}.json
+  # Evidence persists even after the quarantined container is removed.
+  forensics:

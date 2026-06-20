@@ -11,19 +11,33 @@ RUN groupadd -g 10001 appgroup && \
 
 WORKDIR /app
 
+# Build context is the repo root (set in docker-compose.yml).
+# Source files live under controller/
 COPY controller/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the canonical shared secure_messenger — no per-component copies needed.
-COPY shared/secure_messenger.py ./secure_messenger.py
-COPY controller/controller.py ./controller.py
+COPY controller/ ./
 
-RUN chown -R appuser:appgroup /app
-
-# Entrypoint: fix /data ownership (named volume is created as root) then drop privileges
-COPY controller/entrypoint.sh /entrypoint.sh
+# ── REC-08: Pre-flight config integrity check ─────────────────────────────
+# scripts/ is directly accessible from the repo-root build context.
+COPY scripts/check_config_integrity.py ./check_config_integrity.py
+COPY scripts/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Keep root for entrypoint; it drops to appuser after chown
+ENV SERVICE_NAME=controller
+ENV INTEGRITY_ALLOW_MISSING_MANIFEST=true
+
+# ── Security: non-root user ────────────────────────────────────────────────
+# Semgrep: dockerfile.security.missing-user-entrypoint (DL3002 / CKV_DOCKER_8)
+# The controller does not run iptables — a plain non-root user is sufficient.
+# /data is pre-created and owned by appuser so integrity audit records can
+# be written without elevated permissions.
+RUN groupadd -r appgroup \
+ && useradd -r -g appgroup -u 1000 -d /app -s /sbin/nologin appuser \
+ && mkdir -p /data/integrity_audits \
+ && chown -R appuser:appgroup /data /app
+
+USER appuser
+
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python", "controller.py"]

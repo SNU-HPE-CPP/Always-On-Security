@@ -471,6 +471,52 @@ for i in $(seq 1 6); do docker restart node3; done
 docker run --rm --network always-on-security_mgmt-net \
   -e NODE_NAME=rogue99 \
   always-on-security-node1
+```
+
+**3. Telemetry Tampering / Replay Attacks**
+Since all messages are cryptographically signed with HMAC-SHA256, sending raw JSON via `netcat` will be rejected by the Controller. To test `REPLAY_ATTACK` or `TELEMETRY_TAMPER`, you must extract the `HMAC_SECRET` from `.env` and write a custom python script using `pyzmq` to sign and send duplicate `msg_id`s or modify payloads post-signing.
+
+**4. Pre-Flight Config Integrity Block (REC-08)**
+The system will now actively refuse to start if its critical configuration files have been maliciously modified or corrupted. To test this:
+1. Make a subtle modification to a central config file on the host:
+   ```bash
+   echo "# Tampered" >> risk_engine/config/rules.yaml
+   ```
+2. Restart the risk-engine service:
+   ```bash
+   docker compose restart risk-engine
+   ```
+3. Watch the startup logs—you will see a large red error, and the container will immediately exit with code 2 rather than starting:
+   ```bash
+   docker compose logs risk-engine
+   ```
+4. Revert the file and restart to bring the service back up:
+   ```bash
+   git checkout risk_engine/config/rules.yaml
+   docker compose restart risk-engine
+   ```
+
+**5. Pre-Quarantine Forensic Capture (REC-09)**
+Trigger a quarantine on any node, then inspect the captured evidence before the container is stopped:
+1. Force a node into quarantine by running the built-in threat simulator or manually flooding its risk score.
+2. Watch the risk-engine logs for the forensic capture sequence:
+   ```bash
+   docker compose logs -f risk-engine | grep FORENSICS
+   ```
+   You will see:
+   ```
+   [FORENSICS] Starting pre-quarantine capture | node=node1 trigger=QUARANTINE
+   [FORENSICS] Artifact saved: /data/forensics/node1_QUARANTINE_20260615T130000Z.json
+   [FORENSICS] Capture complete | node=node1
+   ```
+3. Inspect the JSON artefact on the host:
+   ```bash
+   docker compose exec risk-engine cat /data/forensics/node1_QUARANTINE_*.json | python3 -m json.tool
+   ```
+   The file contains the process list, network connections, container state, recent alerts, and recent events — all captured at the exact moment of quarantine.
+---
+
+## Useful Commands
 # → ROGUE_NODE alert, node blacklisted, fast-path stop
 ```
 
@@ -496,20 +542,55 @@ docker network connect always-on-security_storage-net node1
 
 ---
 
-## 8. Removed Components
+## Capabilities Demonstrated
 
-The following were intentionally removed as part of the infrastructure-centric refactor:
+* Distributed container monitoring
+* Real-time event collection via ZeroMQ
+* Risk analysis and scoring
+* Automated remediation via Docker API
+* Dashboard visualization with Flask + SQLite
+* Mock SIEM integration (Wazuh)
 
-| Component | Reason |
-|---|---|
-| **Tenant FIM** (`/etc/passwd`, `/etc/hosts`, `/etc/ssh/sshd_config` monitoring) | Production HPC providers do not hash customer-owned files. Violates workload ownership. The platform monitors infrastructure state, not customer data. |
-| **`generate_baseline.py`** | Generated hashes of tenant files. Replaced by `capture_approved_images.py` and `capture_runtime_baseline.py` which capture infrastructure state only. |
-| **`config_hashes.yaml`** | Stored SHA-256 of tenant config files. Replaced by `approved_images.yaml` and `runtime_baseline.yaml`. |
-| **`process_policy.yaml`** | Process name denylist. Process names are trivially spoofable — `cp malware python`, `cp malware nginx`. The detector is ineffective against any informed attacker. Replaced by Falco kernel-level detection. |
-| **Process name denylist detection** in `cluster_observer.py` | Same reason as above. `container.top()` still runs for process count telemetry but process names are no longer checked against a denylist. |
-| **FIM rules** in `rules.yaml` (`FIM_CONFIG_TAMPER`, `FIM_FILE_MODIFIED`) | No longer generated. |
-| **FIM decay hold** in `scoring.py` | FIM no longer exists. Replaced by image and drift event scoring. |
-| **FIM columns** in dashboard | Replaced by image/drift/Falco counters. |
+### Advanced Security Enhancements (Recent PR/Merge)
+
+The core monitoring architecture has been significantly hardened to simulate an air-gapped, always-on HPC security environment. This update shifts the project from a simple telemetry dashboard to an active threat-defense system. Key additions include:
+
+* **1. Cryptographic Telemetry Protocol (`node_agent/secure_messenger.py`)**
+  All inter-node communication over ZeroMQ is now signed with an ephemeral HMAC-SHA256 signature. A shared `.env` secret prevents unauthorized actors from injecting fake telemetry or tampering with resource usage metrics in transit.
+
+* **2. Six-Tier Controller Security Gate (`controller/controller.py`)**
+  The central message broker now acts as a hardened security gate. Before forwarding any event to the Risk Engine, it runs 6 distinct checks:
+  - **HMAC Verification:** Rejects tampered payloads.
+  - **ReplayGuard:** Drops duplicated `msg_id`s within a sliding time window.
+  - **FloodGuard:** Enforces rate-limiting to prevent DoS via telemetry flooding.
+  - **Rogue Node Detection:** Blocks traffic from unrecognized `machine_id`s.
+  - **Impersonation Checks:** Flags nodes trying to spoof trusted identities.
+
+* **3. Node-Level Threat Collection (`node_agent/security_collector.py`)**
+  Agents now run a dedicated third thread (`SecurityCollector`) that actively monitors the host for compromise:
+  - **Config Tampering:** Hashes critical system files (`/etc/hosts`, `/etc/passwd`) against a generated baseline (`config_hashes.yaml`).
+  - **Lateral Movement:** Scans active TCP connections for unexpected outbound SSH activity.
+  - **Process Policy Enforcement:** Monitors running processes against an explicit allowlist/denylist.
+
+* **4. Unified Threat Engine (`risk_engine/threat_detector.py` & `alert_manager.py`)**
+  The Risk Engine now integrates 10 advanced threat detectors (Rogue Node, Impersonation, Silent Node Timeout, etc.) directly into the cumulative scoring pipeline. Threats are categorized by severity (INFO to CRITICAL) and persisted in a new `security_alerts` SQLite table.
+
+* **5. Dark-Mode Security Dashboard (`dashboard/templates/index.html`)**
+  The UI was completely overhauled into a modern, dark-mode security operations center (SOC). It features live-updating SVG threat distribution charts, node trust badges (TRUSTED vs ROGUE), protocol integrity counters, and an XSS-safe dynamic alert feed.
+
+* **6. Pre-flight Config Integrity Check (`scripts/check_config_integrity.py` & `scripts/entrypoint.sh`)**
+  Enforces NIST CM-2 / CM-6 / SI-7. A strict startup check added to `risk-engine` and `controller` verifies all service YAML configurations (`rules.yaml`, `allowlist.yaml`, etc.) against a trusted SHA-256 baseline (`config_hashes.yaml`). 
+  * If a file has been tampered with, the `entrypoint.sh` wrapper intercepts the startup, prints a detailed error to stdout, and exits with code 2. This prevents the system from ever operating with blinded detection rules or a modified allowlist.
+  * Every startup check writes a machine-readable JSON audit record to a persistent `/data/integrity_audits` volume for forensics.
+
+* **7. Pre-Quarantine Forensic Capture (`risk_engine/router.py` & `risk_engine/store.py`)**
+  Enforces NIST IR-4 / IR-5. The moment a node is escalated to the `quarantine` bucket, the system freezes evidence *before* the container is stopped:
+  * **Process list** — full `ps aux` output from inside the container, capturing every running process at time-of-quarantine.
+  * **Network connections** — active TCP connections via `ss -tnp`, revealing any live C2 channels or lateral movement paths.
+  * **Container state** — image, PID, network IPs, and mount points from `docker inspect`.
+  * **Recent security alerts** — the last 20 security alerts for the node pulled from the DB.
+  * **Recent telemetry events** — the last 20 risk-scored events from the `events` table.
+  * Evidence is written to **two independent locations**: the `forensic_snapshots` SQLite table (queryable by the dashboard) and a timestamped JSON file under the persistent `/data/forensics` volume (survives container removal and DB resets).
 
 ---
 

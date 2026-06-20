@@ -132,8 +132,31 @@ class Store:
             )
         """)
 
+        # ── REC-09: Forensic snapshot table ──────────────────────────
+        # Stores pre-quarantine evidence captured before a container is stopped.
+        # NIST SP 800-234: IR-4 (Incident Handling), IR-5 (Incident Monitoring)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS forensic_snapshots (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                captured_at  TEXT NOT NULL,
+                node         TEXT NOT NULL,
+                trigger      TEXT NOT NULL,
+                risk_score   REAL NOT NULL,
+                processes    TEXT,
+                network_conns TEXT,
+                container_state TEXT,
+                recent_alerts TEXT,
+                recent_events TEXT,
+                artifact_path TEXT
+            )
+        """)
+        c.execute("""
+            CREATE INDEX IF NOT EXISTS idx_forensics_node
+            ON forensic_snapshots (node, captured_at DESC)
+        """)
+
         self.conn.commit()
-        log.info("Schema initialised (events + security tables)")
+        log.info("Schema initialised (events + security + forensic tables)")
 
     # ── Original methods ─────────────────────────────────────────────
 
@@ -429,4 +452,66 @@ class Store:
             LEFT JOIN node_identity ni ON ni.node = ns.node
             ORDER BY ns.node ASC
         """).fetchall()
+        return [dict(r) for r in rows]
+
+    # ── REC-09: Forensic snapshot methods ───────────────────────────
+
+    def write_forensic_snapshot(
+        self,
+        node: str,
+        trigger: str,
+        risk_score: float,
+        processes: list,
+        network_conns: list,
+        container_state: dict,
+        recent_alerts: list,
+        recent_events: list,
+        artifact_path: str | None = None,
+    ) -> int:
+        """
+        Persist a pre-quarantine forensic snapshot.
+        Returns the row ID of the inserted record.
+        NIST IR-4 / IR-5 — evidence preservation before remediation.
+        """
+        ts = datetime.now(timezone.utc).isoformat()
+        c = self.conn.cursor()
+        c.execute("""
+            INSERT INTO forensic_snapshots (
+                captured_at, node, trigger, risk_score,
+                processes, network_conns, container_state,
+                recent_alerts, recent_events, artifact_path
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            ts,
+            node,
+            trigger,
+            risk_score,
+            json.dumps(processes),
+            json.dumps(network_conns),
+            json.dumps(container_state),
+            json.dumps(recent_alerts),
+            json.dumps(recent_events),
+            artifact_path,
+        ))
+        self.conn.commit()
+        row_id = c.lastrowid
+        log.info(
+            "[FORENSICS] Snapshot stored | node=%s trigger=%s id=%s artifact=%s",
+            node, trigger, row_id, artifact_path,
+        )
+        return row_id
+
+    def get_forensic_snapshots(self, node: str = None, limit: int = 20) -> list:
+        """Return forensic snapshots, optionally filtered by node."""
+        if node:
+            rows = self.conn.execute("""
+                SELECT * FROM forensic_snapshots
+                WHERE node = ?
+                ORDER BY captured_at DESC LIMIT ?
+            """, (node, limit)).fetchall()
+        else:
+            rows = self.conn.execute("""
+                SELECT * FROM forensic_snapshots
+                ORDER BY captured_at DESC LIMIT ?
+            """, (limit,)).fetchall()
         return [dict(r) for r in rows]
