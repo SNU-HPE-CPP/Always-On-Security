@@ -34,9 +34,19 @@ echo "════════════════════════�
 #   1 → manifest missing (fatal)
 #   2 → tampered config files (fatal)
 #   3 → unexpected error (fatal)
+#
+# FIX #6: Forward INTEGRITY_ALLOW_MISSING_MANIFEST env var as CLI flag so
+# check_config_integrity.py actually respects it (the env var alone is read
+# inside the Python argparse default, but explicit flag is more reliable).
+ALLOW_MISSING_FLAG=""
+if [ "${INTEGRITY_ALLOW_MISSING_MANIFEST:-false}" = "true" ]; then
+    ALLOW_MISSING_FLAG="--allow-missing-manifest"
+fi
+
 python3 /app/check_config_integrity.py \
     --manifest   "${MANIFEST}" \
-    --config-dir "${CONFIG_DIR}"
+    --config-dir "${CONFIG_DIR}" \
+    ${ALLOW_MISSING_FLAG}
 
 EXIT_CODE=$?
 

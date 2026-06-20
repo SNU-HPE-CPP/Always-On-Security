@@ -210,56 +210,64 @@ class Router:
         )
 
     def _collect_processes(self, node: str) -> list:
-        """Run 'ps aux' inside the container and parse the output."""
+        """
+        Collect running processes via Docker SDK top() — goes through the
+        socket proxy, no bare subprocess docker exec.
+        FIX #10: Replaced subprocess docker exec with container.top() SDK call.
+        """
+        client = self._get_docker()
+        if client is None:
+            return [{"error": "Docker client unavailable"}]
         try:
-            result = subprocess.run(
-                ["docker", "exec", node, "ps", "aux", "--no-headers"],
-                capture_output=True, text=True, timeout=10,
-            )
-            if result.returncode != 0:
-                return [{"error": result.stderr.strip()}]
-            lines = []
-            for line in result.stdout.strip().splitlines():
-                parts = line.split(None, 10)
-                if len(parts) >= 11:
-                    lines.append({
-                        "user":    parts[0],
-                        "pid":     parts[1],
-                        "cpu_pct": parts[2],
-                        "mem_pct": parts[3],
-                        "command": parts[10],
-                    })
+            container = client.containers.get(node)
+            container.reload()
+            result = container.top(ps_args="aux")
+            titles  = result.get("Titles", [])
+            procs   = result.get("Processes", []) or []
+            lines   = []
+            for row in procs:
+                entry = dict(zip(titles, row))
+                lines.append({
+                    "user":    entry.get("USER", ""),
+                    "pid":     entry.get("PID", ""),
+                    "cpu_pct": entry.get("%CPU", ""),
+                    "mem_pct": entry.get("%MEM", ""),
+                    "command": entry.get("COMMAND", ""),
+                })
             return lines
         except Exception as exc:
             log.warning("[FORENSICS] Process collection failed for %s: %s", node, exc)
             return [{"error": str(exc)}]
 
     def _collect_network(self, node: str) -> list:
-        """Capture active TCP connections via 'ss -tnp' inside the container."""
+        """
+        Collect network connections via Docker SDK exec_run() — goes through the
+        socket proxy, no bare subprocess docker exec.
+        FIX #10: Replaced subprocess docker exec with container.exec_run() SDK call.
+        """
+        client = self._get_docker()
+        if client is None:
+            return [{"error": "Docker client unavailable"}]
         try:
-            result = subprocess.run(
-                ["docker", "exec", node, "ss", "-tnp"],
-                capture_output=True, text=True, timeout=10,
-            )
-            if result.returncode != 0:
-                # Fallback to netstat if ss is unavailable
-                result = subprocess.run(
-                    ["docker", "exec", node, "netstat", "-tnp"],
-                    capture_output=True, text=True, timeout=10,
-                )
-            if result.returncode != 0:
-                return [{"error": result.stderr.strip()}]
-            lines = []
-            for line in result.stdout.strip().splitlines()[1:]:  # skip header
-                parts = line.split()
-                if len(parts) >= 5:
-                    lines.append({
-                        "state":       parts[0] if len(parts) > 0 else "",
-                        "local_addr":  parts[3] if len(parts) > 3 else "",
-                        "remote_addr": parts[4] if len(parts) > 4 else "",
-                        "process":     parts[-1] if parts else "",
-                    })
-            return lines
+            container = client.containers.get(node)
+            container.reload()
+            # Try ss first, fall back to netstat
+            for cmd in (["ss", "-tnp"], ["netstat", "-tnp"]):
+                result = container.exec_run(cmd, demux=False)
+                if result.exit_code == 0:
+                    output = result.output.decode(errors="replace") if result.output else ""
+                    lines  = []
+                    for line in output.strip().splitlines()[1:]:  # skip header
+                        parts = line.split()
+                        if len(parts) >= 5:
+                            lines.append({
+                                "state":       parts[0],
+                                "local_addr":  parts[3] if len(parts) > 3 else "",
+                                "remote_addr": parts[4] if len(parts) > 4 else "",
+                                "process":     parts[-1],
+                            })
+                    return lines
+            return [{"error": "ss and netstat both unavailable in container"}]
         except Exception as exc:
             log.warning("[FORENSICS] Network collection failed for %s: %s", node, exc)
             return [{"error": str(exc)}]

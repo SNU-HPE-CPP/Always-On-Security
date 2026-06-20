@@ -396,27 +396,65 @@ def _sha256_file(path: str) -> str | None:
 
 class InfraConfigGuard:
     """
-    Computes SHA-256 hashes of infrastructure-owned config files at startup,
-    then re-verifies them every INFRA_INTEGRITY_INTERVAL seconds.
+    Compares SHA-256 hashes of infrastructure-owned config files against
+    the signed manifest (config_hashes.yaml) rather than a freshly-captured
+    startup snapshot.
 
-    Only security infrastructure files are monitored. Customer / tenant files
-    are never touched.
+    FIX #15: The old implementation called _capture_baseline() at startup,
+    which accepted whatever state the files were in at that moment — including
+    already-tampered files.  The correct anchor is config_hashes.yaml, which
+    was generated from a known-good state and committed to version control.
+    Files not listed in the manifest still get a startup snapshot as fallback.
     """
 
-    def __init__(self, paths: list[str]):
+    def __init__(self, paths: list[str], manifest_path: str = None):
         self._paths    = paths
-        self._baseline: dict[str, str] = {}
         self._last_check = 0.0
-        self._capture_baseline()
+        # Load trusted hashes from the manifest (config_hashes.yaml)
+        self._manifest: dict[str, str] = {}
+        self._startup: dict[str, str]  = {}  # fallback for unlisted files
+        _mpath = manifest_path or os.path.join(CONFIG_DIR, "config_hashes.yaml")
+        self._load_manifest(_mpath)
+        self._capture_startup_fallback()
 
-    def _capture_baseline(self) -> None:
+    def _load_manifest(self, manifest_path: str) -> None:
+        try:
+            with open(manifest_path) as f:
+                data = yaml.safe_load(f) or {}
+            self._manifest = {str(k): str(v) for k, v in data.items() if v}
+            log.info(
+                f"[InfraConfig] Loaded manifest with {len(self._manifest)} entries "
+                f"from {manifest_path}"
+            )
+        except FileNotFoundError:
+            log.warning(
+                f"[InfraConfig] Manifest not found at {manifest_path} — "
+                "falling back to startup-snapshot baseline"
+            )
+        except Exception as e:
+            log.warning(f"[InfraConfig] Could not read manifest: {e}")
+
+    def _resolve_expected(self, path: str) -> str | None:
+        """Try bare filename, absolute path, and relative path against manifest."""
+        basename = os.path.basename(path)
+        for key in (path, basename, f"risk_engine/config/{basename}"):
+            if key in self._manifest:
+                return self._manifest[key]
+        return None
+
+    def _capture_startup_fallback(self) -> None:
+        """Capture startup hashes only for files NOT covered by the manifest."""
         for path in self._paths:
-            digest = _sha256_file(path)
-            if digest:
-                self._baseline[path] = digest
-                log.info(f"[InfraConfig] Baseline captured: {os.path.basename(path)} = {digest[:16]}...")
-            else:
-                log.warning(f"[InfraConfig] Cannot hash {path} — file may not exist yet")
+            if self._resolve_expected(path) is None:
+                digest = _sha256_file(path)
+                if digest:
+                    self._startup[path] = digest
+                    log.warning(
+                        f"[InfraConfig] {os.path.basename(path)} not in manifest — "
+                        f"using startup snapshot as fallback"
+                    )
+                else:
+                    log.warning(f"[InfraConfig] Cannot hash {path} — file may not exist yet")
 
     def check(self) -> list[dict]:
         """
@@ -430,12 +468,15 @@ class InfraConfigGuard:
 
         events = []
         for path in self._paths:
-            expected = self._baseline.get(path)
+            expected = self._resolve_expected(path)
+            # Fall back to startup snapshot for files not in the manifest
+            if expected is None:
+                expected = self._startup.get(path)
             if expected is None:
                 # Try to capture if file appeared after startup
                 digest = _sha256_file(path)
                 if digest:
-                    self._baseline[path] = digest
+                    self._startup[path] = digest
                 continue
 
             current = _sha256_file(path)
@@ -460,8 +501,9 @@ class InfraConfigGuard:
                         "threat_type":      threat_type,
                     },
                 })
-                # Update baseline to avoid repeated alerts for same change
-                self._baseline[path] = current
+                # Update startup snapshot to avoid repeated alerts for same change
+                # (manifest entry remains unchanged — next restart will re-detect)
+                self._startup[path] = current
 
         return events
 
@@ -496,8 +538,11 @@ def main():
     # Per-node SecureMessenger instances (stable machine_id = container ID)
     messengers: dict[str, SecureMessenger] = {}
 
-    # Infrastructure config integrity guard — captures baseline at startup
-    infra_guard = InfraConfigGuard(INFRA_CONFIG_FILES)
+    # Infrastructure config integrity guard — anchored to config_hashes.yaml manifest
+    infra_guard = InfraConfigGuard(
+        INFRA_CONFIG_FILES,
+        manifest_path=os.path.join(CONFIG_DIR, "config_hashes.yaml"),
+    )
 
     log.info("Host Observer ready — starting monitoring loop")
 

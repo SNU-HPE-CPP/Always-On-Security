@@ -131,6 +131,12 @@ class Correlator:
     # ── Warm restart ─────────────────────────────────────────────────────────
 
     def warm_restart(self, past_events: list) -> None:
+        """
+        Reload historical correlation windows from the DB after a restart.
+        FIX #19: Clear existing windows before reloading to prevent double-counting
+        when the engine restarts multiple times (e.g. crash-loop recovery).
+        """
+        self._windows.clear()
         loaded = 0
         for ev in past_events:
             rule_ids = []

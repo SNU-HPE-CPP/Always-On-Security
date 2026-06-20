@@ -38,9 +38,7 @@ WORKDIR /opt/security-monitor
 # Install Python pipeline dependencies
 COPY security_monitor/requirements.txt /opt/security-monitor/requirements.txt
 RUN pip3 install --no-cache-dir -r requirements.txt
-
-# psutil is used by the Zeek emulator shim to inspect local listeners
-RUN pip3 install --no-cache-dir psutil==6.1.1
+# FIX #18: psutil moved into requirements.txt — removed redundant separate layer.
 
 # Copy source — use the canonical shared secure_messenger, not the local copy
 COPY security_monitor/ /opt/security-monitor/

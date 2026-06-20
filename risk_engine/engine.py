@@ -166,6 +166,11 @@ def main():
                     f"[CONTROLLER_ALERT] {alert.threat_type} | "
                     f"node={alert.node_id} | severity={alert.severity}"
                 )
+            # FIX #8: Persist offset to DB so warm-restart skips replayed events.
+            store.conn.execute(
+                "UPDATE engine_offset SET last_committed=? WHERE id=1", (offset,)
+            )
+            store.conn.commit()
             last_offset = offset
             continue
 

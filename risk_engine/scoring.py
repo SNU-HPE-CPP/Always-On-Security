@@ -55,10 +55,13 @@ class WeightedScorer:
         return round(event_score, 4), round(new_cumulative, 4), bucket
 
     def _bucket(self, score: float) -> str:
-        # We rely on dictionary insertion order (silent, auto, human).
-        # By only checking the upper bound (+1 to close the decimal gap), we prevent floats from falling through.
+        # FIX #11: Use inclusive upper-bound comparison (score <= hi) instead of
+        # the previous (score < hi + 1.0) fudge.  The old logic caused score=31.0
+        # to match both 'silent [0,30]' (31 < 31) → false, then 'auto [31,70]'
+        # (31 < 71) → true, which was correct by accident but fragile.
+        # With score=30.9 the old check passed silent (30.9 < 31) leaving no
+        # headroom for float drift.  Explicit <= is unambiguous.
         for name, bounds in self.buckets.items():
-            hi = bounds[1]
-            if score < hi + 1.0:
+            if score <= bounds[1]:
                 return name
-        return "quarantine"  # score >= 101.0
+        return "quarantine"  # score > 100

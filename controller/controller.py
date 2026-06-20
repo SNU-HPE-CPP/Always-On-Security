@@ -331,7 +331,10 @@ def main():
         is_flooding, msg_count = flood_guard.check(node)
         if is_flooding:
             log.warning(f"[FLOOD_DETECTED] node={node} sent {msg_count} msgs/60s (max={flood_max})")
-            # Note: we still forward the original message but ALSO send an alert
+            # Note: we still forward the original message but ALSO send an alert.
+            # FIX #7: Do NOT increment offset here — it was already incremented
+            # before CHECK 1. A second increment caused offsets to skip values,
+            # breaking replay deduplication and warm-restart in the risk engine.
             alert = _make_security_alert(
                 node=node,
                 threat_type="FLOOD_ATTACK",
@@ -341,7 +344,6 @@ def main():
                 recommended_action="Rate-limit or quarantine node. Investigate DoS intent.",
                 offset=offset,
             )
-            offset += 1
             save_offset(offset)
             fwd.send_json(alert)
             # Continue processing original message (don't drop — may be legitimate)

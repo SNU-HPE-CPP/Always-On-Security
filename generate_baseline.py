@@ -36,10 +36,11 @@ import yaml
 DEFAULT_FILES = ["/etc/hosts", "/etc/passwd", "/etc/sudoers"]
 
 # ── Service-level YAML configs verified at startup (REC-08) ──────────────────
+# FIX #13: Removed process_policy.yaml — file does not exist in this deployment.
+# Kept in sync with check_config_integrity.py SERVICE_CONFIG_FILES list.
 SERVICE_CONFIG_FILES = [
     "rules.yaml",
     "allowlist.yaml",
-    "process_policy.yaml",
     "thresholds.yaml",
     "node_criticality.yaml",
 ]

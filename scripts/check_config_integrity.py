@@ -43,10 +43,10 @@ log = logging.getLogger("check_config_integrity")
 
 # Config files that MUST be verified before the service starts.
 # These are the service-level YAML configs (not monitored host files like /etc/hosts).
+# FIX #4: Removed process_policy.yaml — file does not exist in this deployment.
 SERVICE_CONFIG_FILES = [
     "rules.yaml",
     "allowlist.yaml",
-    "process_policy.yaml",
     "thresholds.yaml",
     "node_criticality.yaml",
 ]

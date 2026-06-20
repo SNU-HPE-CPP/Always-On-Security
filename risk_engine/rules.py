@@ -39,6 +39,14 @@ class RuleEngine:
         self._observer.start()
         log.info(f"Watching {self._path.parent} for rule changes")
 
+    def stop(self) -> None:
+        """Stop the file-system watcher. Call on shutdown to avoid thread leaks."""
+        try:
+            self._observer.stop()
+            self._observer.join(timeout=5)
+        except Exception as e:
+            log.warning(f"RuleEngine watcher stop error: {e}")
+
     def match(self, event: dict) -> list[tuple[str, int, int]]:
         reasons_str = " ".join(event.get("reasons", []))
         matches = []

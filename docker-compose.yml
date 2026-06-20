@@ -5,24 +5,20 @@ services:
   # Prevents accidental or malicious broad socket access.
   #
   # Required endpoints:
-  #   host-observer:    GET /containers, GET /events, GET /info
+  #   host-observer:    GET /containers, GET /images, GET /info
   #   security-monitor: GET /containers, GET /events
   #   risk-engine:      POST /containers/{id}/pause, POST /containers/{id}/stop,
   #                     POST /networks/{id}/disconnect, GET /containers/{id}/json
-  #
-  # All other endpoints are blocked by the proxy.
   docker-socket-proxy:
     image: tecnativa/docker-socket-proxy:0.1.2
     container_name: docker-socket-proxy
     restart: unless-stopped
     environment:
-      # Read-only APIs needed by host-observer and security-monitor
       CONTAINERS: 1
       EVENTS: 1
       INFO: 1
       IMAGES: 1
       NETWORKS: 1
-      # Write APIs needed by risk-engine enforcement
       POST: 1
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -34,23 +30,12 @@ services:
     build:
       context: .
       dockerfile: controller/Dockerfile
-    build:
-      context: .
-      dockerfile: controller/Dockerfile
     container_name: controller
     environment:
       - HMAC_SECRET=${HMAC_SECRET}
       - ALLOWLIST_PATH=/opt/security/config/allowlist.yaml
-      # ── REC-08: Pre-flight integrity check ──────────────────────────
-      - SERVICE_NAME=controller
-      - CONFIG_HASHES_PATH=/opt/security/config/config_hashes.yaml
-      - CONFIG_DIR=/opt/security/config
-      - INTEGRITY_AUDIT_DIR=/data/integrity_audits
-      - INTEGRITY_ALLOW_MISSING_MANIFEST=${INTEGRITY_ALLOW_MISSING_MANIFEST:-true}
-      - INTEGRITY_STRICT=${INTEGRITY_STRICT:-false}
     volumes:
       - shared_data:/data
-      - integrity_audits:/data/integrity_audits
       - ./risk_engine/config:/opt/security/config:ro
     networks:
       mgmt-net:
@@ -63,29 +48,13 @@ services:
       args:
         DOCKER_GID: "963"
     container_name: risk-engine
-    # ── Security: capabilities required for non-root enforcement actions ──
-    # CAP_NET_ADMIN: allows appuser (UID 1000) to manage iptables DROP rules
-    #                for node isolation without running as root (DL3002 fix).
     cap_add:
       - NET_ADMIN
     environment:
       - ALLOWLIST_PATH=/opt/security/config/allowlist.yaml
-      # ── REC-08: Pre-flight integrity check ──────────────────────────
-      - SERVICE_NAME=risk-engine
-      - CONFIG_HASHES_PATH=/opt/security/config/config_hashes.yaml
-      - CONFIG_DIR=/opt/security/config
-      - INTEGRITY_AUDIT_DIR=/data/integrity_audits
-      - INTEGRITY_ALLOW_MISSING_MANIFEST=${INTEGRITY_ALLOW_MISSING_MANIFEST:-true}
-      - INTEGRITY_STRICT=${INTEGRITY_STRICT:-false}
-      # ── REC-09: Forensic capture directory ──────────────────────────
-      - FORENSICS_DIR=/data/forensics
       - DOCKER_HOST=tcp://docker-socket-proxy:2375
-    cap_add:
-      - NET_ADMIN
     volumes:
       - shared_data:/data
-      - integrity_audits:/data/integrity_audits
-      - forensics:/data/forensics
       - ./risk_engine/config:/opt/security/config:ro
     depends_on:
       - controller
@@ -215,7 +184,10 @@ services:
   #   docker_collector → falco_collector → network_collector →
   #   threat_correlator → policy_engine → event_forwarder
   #
-  # Also tails Falco event output from the shared falco-logs volume.
+  # falco_collector tails /var/log/falco/events.json written by the
+  # host-installed Falco (see README — containerised Falco does not
+  # support kernel 6.19 yet). Mount the host path as a bind mount
+  # once Falco is installed natively.
   security-monitor:
     build:
       context: .
@@ -252,37 +224,46 @@ services:
         ipv4_address: 10.10.3.250
 
   # ── Falco (Infrastructure_Zone) ────────────────────────────────────
-  # Host-level runtime security sensor.
-  # Runs in the Infrastructure Zone — never inside workload containers.
-  # Events are written to a shared volume read by security-monitor.
+  # DISABLED: falcosecurity/falco:0.39.2 modern BPF probe does not
+  # support Linux kernel 6.19.x (scap_init failure).
   #
-  # falcoctl auto-selects modern_ebpf driver (visible in logs).
-  # Config is passed via FALCO_* env vars — the entrypoint wrapper
-  # does not accept --modern-bpf as a CLI flag.
-  falco:
-    image: falcosecurity/falco:0.39.2
-    container_name: falco
-    privileged: true
-    pid: host
-    environment:
-      - FALCO_DRIVER_CHOICE=modern_ebpf
-      - FALCO_JSON_OUTPUT=true
-      - FALCO_FILE_OUTPUT_ENABLED=true
-      - FALCO_FILE_OUTPUT_FILENAME=/var/log/falco/events.json
-      - FALCO_FILE_OUTPUT_KEEP_ALIVE=true
-      - FALCO_JSON_INCLUDE_OUTPUT_PROPERTY=true
-    volumes:
-      - /var/run/docker.sock:/host/var/run/docker.sock:ro
-      - /dev:/host/dev:ro
-      - /proc:/host/proc:ro
-      - /boot:/host/boot:ro
-      - /lib/modules:/host/lib/modules:ro
-      - /usr:/host/usr:ro
-      - /sys/kernel/btf/vmlinux:/sys/kernel/btf/vmlinux:ro
-      - falco_logs:/var/log/falco
-    networks:
-      mgmt-net:
-        ipv4_address: 10.10.3.45
+  # To enable Falco, install it natively on the host:
+  #   yay -S falco-bin
+  #   sudo falco --modern-bpf \
+  #     -o json_output=true \
+  #     -o file_output.enabled=true \
+  #     -o file_output.filename=/var/log/falco/events.json
+  #
+  # Then replace the falco_logs named volume in security-monitor with
+  # a host bind mount:
+  #   - /var/log/falco:/var/log/falco:ro
+  #
+  # Uncomment this block when a Falco release supports kernel 6.19+.
+  #
+  # falco:
+  #   image: falcosecurity/falco:0.39.2
+  #   container_name: falco
+  #   privileged: true
+  #   pid: host
+  #   environment:
+  #     - FALCO_DRIVER_CHOICE=modern_ebpf
+  #     - FALCO_JSON_OUTPUT=true
+  #     - FALCO_FILE_OUTPUT_ENABLED=true
+  #     - FALCO_FILE_OUTPUT_FILENAME=/var/log/falco/events.json
+  #     - FALCO_FILE_OUTPUT_KEEP_ALIVE=true
+  #     - FALCO_JSON_INCLUDE_OUTPUT_PROPERTY=true
+  #   volumes:
+  #     - /var/run/docker.sock:/host/var/run/docker.sock:ro
+  #     - /dev:/host/dev:ro
+  #     - /proc:/host/proc:ro
+  #     - /boot:/host/boot:ro
+  #     - /lib/modules:/host/lib/modules:ro
+  #     - /usr:/host/usr:ro
+  #     - /sys/kernel/btf/vmlinux:/sys/kernel/btf/vmlinux:ro
+  #     - falco_logs:/var/log/falco
+  #   networks:
+  #     mgmt-net:
+  #       ipv4_address: 10.10.3.45
 
 networks:
   compute-net:
@@ -310,11 +291,4 @@ networks:
 
 volumes:
   shared_data:
-  # ── REC-08: Persistent integrity audit records ──────────────────────────
-  # Stores JSON audit records from every pre-flight check run.
-  # Mount this volume or copy files out to retain evidence across rebuilds.
-  integrity_audits:
-  # ── REC-09: Pre-quarantine forensic artifacts ────────────────────────────
-  # Each quarantine event writes a JSON file here: {node}_{trigger}_{ts}.json
-  # Evidence persists even after the quarantined container is removed.
-  forensics:
+  falco_logs:

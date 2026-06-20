@@ -161,7 +161,8 @@ def api_node_security():
                 ), 0) as flood_count,
                 COALESCE((
                     SELECT COUNT(*) FROM security_alerts
-                    WHERE node_id = ns.node AND threat_type = 'CONFIG_TAMPER'
+                    WHERE node_id = ns.node
+                    AND threat_type IN ('CONFIG_DRIFT','POLICY_TAMPER','ALLOWLIST_TAMPER')
                 ), 0) as config_tamper_count,
                 COALESCE((
                     SELECT COUNT(*) FROM security_alerts

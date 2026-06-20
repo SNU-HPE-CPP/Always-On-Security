@@ -27,7 +27,10 @@ policies:
     action: quarantine
 
   # Critical correlated threats: stop immediately
-  - threat_type: CONFIG_TAMPER
+  # FIX #20: Replaced stale CONFIG_TAMPER with current POLICY_TAMPER type.
+  # CONFIG_TAMPER was the old name; it was split into CONFIG_DRIFT,
+  # POLICY_TAMPER, and ALLOWLIST_TAMPER in the refactor.
+  - threat_type: POLICY_TAMPER
     severity: CRITICAL
     action: quarantine
 
