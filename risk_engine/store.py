@@ -82,6 +82,11 @@ class Store:
             )
         """)
 
+        try:
+            c.execute("ALTER TABLE node_status ADD COLUMN isolated_ip TEXT DEFAULT NULL")
+        except sqlite3.OperationalError:
+            pass
+
         c.execute("""
             INSERT OR IGNORE INTO engine_offset (id, last_committed)
             VALUES (1, 0)
@@ -233,17 +238,69 @@ class Store:
         )
         self.conn.commit()
 
-    def update_node_status(self, node: str, status: str, risk_score: float) -> None:
+    def update_node_status(self, node: str, status: str, risk_score: float, isolated_ip: str = None) -> None:
         ts = datetime.now(timezone.utc).isoformat()
         c = self.conn.cursor()
-        c.execute("""
-            INSERT INTO node_status (node, status, risk_score, last_updated)
-            VALUES (?, ?, ?, ?)
+        
+        # If isolated_ip is provided, we update it; if not, we leave it as is or insert NULL if new
+        if isolated_ip is not None:
+            c.execute("""
+                INSERT INTO node_status (node, status, risk_score, last_updated, isolated_ip)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(node) DO UPDATE SET
+                    status = excluded.status,
+                    risk_score = excluded.risk_score,
+                    last_updated = excluded.last_updated,
+                    isolated_ip = excluded.isolated_ip
+            """, (node, status, risk_score, ts, isolated_ip))
+        else:
+            c.execute("""
+                INSERT INTO node_status (node, status, risk_score, last_updated)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(node) DO UPDATE SET
+                    status = excluded.status,
+                    risk_score = excluded.risk_score,
+                    last_updated = excluded.last_updated
+            """, (node, status, risk_score, ts))
+        self.conn.commit()
+
+    def get_isolated_ip(self, node: str) -> str:
+        row = self.conn.execute(
+            "SELECT isolated_ip FROM node_status WHERE node=?", (node,)
+        ).fetchone()
+        return row["isolated_ip"] if row else None
+
+    def set_isolated_ip(self, node: str, ip: str) -> None:
+        self.conn.execute(
+            "UPDATE node_status SET isolated_ip=? WHERE node=?", (ip, node)
+        )
+        self.conn.commit()
+
+    def reset_node_score(self, node: str) -> None:
+        ts = datetime.now(timezone.utc).isoformat()
+        self.conn.execute("""
+            INSERT INTO node_scores (node, cumulative_score, updated_at)
+            VALUES (?, 0.0, ?)
             ON CONFLICT(node) DO UPDATE SET
-                status = excluded.status,
-                risk_score = excluded.risk_score,
-                last_updated = excluded.last_updated
-        """, (node, status, risk_score, ts))
+                cumulative_score = 0.0,
+                updated_at = excluded.updated_at
+        """, (node, ts))
+        self.conn.commit()
+
+    def reset_all_tables(self) -> None:
+        c = self.conn.cursor()
+        c.execute("BEGIN TRANSACTION")
+        tables = [
+            "events", "node_scores", "node_status", "security_alerts",
+            "node_identity", "replay_log", "forensic_snapshots"
+        ]
+        for table in tables:
+            try:
+                c.execute(f"DELETE FROM {table}")
+            except sqlite3.OperationalError:
+                pass
+        
+        c.execute("UPDATE engine_offset SET last_committed = 0 WHERE id = 1")
         self.conn.commit()
 
     def write_heartbeat_event(self, node: str, delta_seconds: float) -> None:

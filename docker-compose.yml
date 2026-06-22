@@ -48,6 +48,8 @@ services:
       args:
         DOCKER_GID: "963"
     container_name: risk-engine
+    expose:
+      - "5557"
     cap_add:
       - NET_ADMIN
     environment:

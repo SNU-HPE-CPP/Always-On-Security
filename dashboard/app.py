@@ -1,6 +1,8 @@
 from flask import Flask, jsonify, render_template, request
 import sqlite3
 import json
+import zmq
+import re
 
 app = Flask(__name__)
 
@@ -297,6 +299,72 @@ def api_alert_stats():
             "recent_24h":   recent_24h,
             "replay_total": replay_total,
         })
+    finally:
+        conn.close()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Command API (ZMQ Client)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _send_cmd(payload):
+    ctx = zmq.Context.instance()
+    sock = ctx.socket(zmq.REQ)
+    sock.setsockopt(zmq.RCVTIMEO, 5000)  # 5s timeout
+    try:
+        sock.connect("tcp://risk-engine:5557")
+        sock.send_json(payload)
+        reply = sock.recv_json()
+        return jsonify(reply)
+    except zmq.Again:
+        return jsonify({"ok": False, "error": "Risk engine timeout"}), 504
+    finally:
+        sock.close()
+
+@app.route("/api/nodes/<node>/approve", methods=["POST"])
+def approve_node(node):
+    if not re.match(r'^[a-zA-Z0-9_-]{1,32}$', node):
+        return jsonify({"ok": False, "error": "Invalid node name"}), 400
+    return _send_cmd({"action": "approve", "node": node})
+
+@app.route("/api/nodes/<node>/restart", methods=["POST"])
+def restart_node(node):
+    if not re.match(r'^[a-zA-Z0-9_-]{1,32}$', node):
+        return jsonify({"ok": False, "error": "Invalid node name"}), 400
+    return _send_cmd({"action": "restart", "node": node})
+
+@app.route("/api/reset", methods=["POST"])
+def reset_system():
+    return _send_cmd({"action": "reset"})
+
+@app.route("/api/nodes/<node>/details", methods=["GET"])
+def get_node_details(node):
+    if not re.match(r'^[a-zA-Z0-9_-]{1,32}$', node):
+        return jsonify({"error": "Invalid node name"}), 400
+
+    conn = get_db()
+    try:
+        if not _table_exists(conn, "events"):
+            return jsonify([])
+
+        rows = conn.execute("""
+            SELECT timestamp, reasons, risk_score, weighted_score, bucket, matched_rules
+            FROM events
+            WHERE node = ?
+              AND bucket IN ('human', 'auto', 'quarantine')
+            ORDER BY id DESC LIMIT 15
+        """, (node,)).fetchall()
+
+        events = []
+        for r in rows:
+            events.append({
+                "timestamp": r["timestamp"],
+                "reasons": json.loads(r["reasons"]) if r["reasons"] else [],
+                "risk_score": r["risk_score"],
+                "weighted_score": r["weighted_score"],
+                "bucket": r["bucket"],
+                "matched_rules": json.loads(r["matched_rules"]) if r["matched_rules"] else []
+            })
+        return jsonify(events)
     finally:
         conn.close()
 

@@ -396,6 +396,58 @@
       box-shadow: 0 0 6px var(--status-unresponsive);
     }
 
+    .dot-awaiting_approval {
+      background: var(--sev-medium);
+      box-shadow: 0 0 6px var(--sev-medium);
+      animation: pulse 1s infinite;
+    }
+
+    /* ── Action Buttons & Modal ──────────────────────────── */
+    .btn-action {
+      background: #1e293b;
+      color: #fff;
+      border: 1px solid var(--border);
+      padding: 4px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.75rem;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+    .btn-action:hover { background: #334155; }
+    .btn-review { border-color: var(--sev-medium); color: var(--sev-medium); }
+    .btn-review:hover { background: rgba(234, 179, 8, 0.1); }
+    .btn-restart { border-color: var(--text-dim); color: var(--text-dim); }
+    .btn-restart:hover { background: rgba(148, 163, 184, 0.1); }
+    .btn-reset { border-color: var(--sev-critical); color: var(--sev-critical); }
+    .btn-reset:hover { background: rgba(239, 68, 68, 0.1); }
+
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.85);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+    }
+    .modal-content {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 2rem;
+      max-width: 600px;
+      width: 100%;
+      color: #fff;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+    }
+    .modal-header { font-size: 1.2rem; font-weight: bold; margin-bottom: 1rem; color: var(--sev-medium); }
+    .modal-timeline { max-height: 250px; overflow-y: auto; margin: 1rem 0; font-size: 0.85rem; background: #0a0e1a; padding: 1rem; border-radius: 6px; }
+    .timeline-item { margin-bottom: 0.5rem; border-left: 2px solid var(--sev-medium); padding-left: 0.5rem; }
+    .btn-approve { background: var(--sev-medium); color: #000; border: none; padding: 8px 16px; border-radius: 4px; font-weight: bold; cursor: pointer; width: 100%; margin-top: 1rem; }
+    .btn-approve:hover { filter: brightness(1.1); }
+    .btn-close-modal { background: transparent; border: 1px solid #555; color: #ccc; padding: 4px 12px; border-radius: 4px; cursor: pointer; margin-top: 0.5rem; width: 100%; }
+
     /* ── Threat type chips ───────────────────────────────── */
     .threat-chip {
       display: inline-block;
@@ -583,6 +635,7 @@
       <span id="live-clock">–</span>
       &nbsp;·&nbsp;
       <span class="refresh-tag">Auto-refresh 5s</span>
+      <button class="btn-action btn-reset" onclick="resetSystem()" style="margin-left:1rem;">🔄 Reset System</button>
     </div>
   </header>
 
@@ -632,11 +685,12 @@
                 <th>Replay</th>
                 <th>Floods</th>
                 <th>Last Seen</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody id="node-tbody">
               <tr>
-                <td colspan="7" class="empty-state">Loading…</td>
+                <td colspan="8" class="empty-state">Loading…</td>
               </tr>
             </tbody>
           </table>
@@ -933,11 +987,12 @@
         busy: 'dot-busy',
         quarantined: 'dot-quarantined',
         unresponsive: 'dot-unresponsive',
+        awaiting_approval: 'dot-awaiting_approval'
       };
       const cls = map[status] || 'dot-idle';
       const wrap = el('span');
       wrap.appendChild(el('span', { class: `status-dot ${cls}` }));
-      wrap.appendChild(document.createTextNode(status.toUpperCase()));
+      wrap.appendChild(document.createTextNode(status.toUpperCase().replace('_', ' ')));
       return wrap;
     }
 
@@ -987,12 +1042,19 @@
 
       if (!data || !data.length) {
         tbody.appendChild(el('tr', null,
-          el('td', { colspan: '7', class: 'empty-state' }, 'No nodes registered yet.')
+          el('td', { colspan: '8', class: 'empty-state' }, 'No nodes registered yet.')
         ));
         return;
       }
 
       for (const n of data) {
+        let actionBtn = el('span', { style: 'color:var(--text-muted)' }, '—');
+        if (n.status === 'awaiting_approval') {
+          actionBtn = el('button', { class: 'btn-action btn-review', onclick: `showModal('${n.node}')` }, '⚠ Review');
+        } else if (n.status === 'quarantined' || n.status === 'unresponsive') {
+          actionBtn = el('button', { class: 'btn-action btn-restart', onclick: `restartNode('${n.node}')` }, '↺ Restart');
+        }
+
         const tr = el('tr', null,
           el('td', null, el('strong', null, n.node || '—')),
           el('td', null, statusDot(n.status || 'idle')),
@@ -1003,6 +1065,7 @@
           el('td', { class: 'mono', style: n.flood_count > 0 ? 'color:var(--sev-high)' : '' },
             String(n.flood_count || 0)),
           el('td', { class: 'mono', style: 'color:var(--text-muted)' }, fmtShort(n.last_updated)),
+          el('td', null, actionBtn)
         );
         tbody.appendChild(tr);
       }
@@ -1228,20 +1291,94 @@
       }
     }
 
-    // ── Master refresh ────────────────────────────────────────────────────────
+    // ── Auto-Refresh Setup ────────────────────────────────────────────────────
 
-    async function refresh() {
-      await Promise.all([
-        refreshStats(),
-        refreshNodeTable(),
-        refreshIdentityTable(),
-        refreshAlerts(),
-      ]);
+    let isModalOpen = false;
+
+    async function tick() {
+      if (!isModalOpen) {
+        await Promise.allSettled([
+          refreshStats(),
+          refreshNodeTable(),
+          refreshIdentityTable(),
+          refreshAlerts(),
+        ]);
+      }
     }
 
-    refresh();
-    setInterval(refresh, 5000);
+    // ── Action Functions & Modal ─────────────────────────────────────────────
+
+    async function showModal(node) {
+      isModalOpen = true;
+      document.getElementById('modal-node-name').innerText = node;
+      document.getElementById('human-modal').style.display = 'flex';
+      
+      const timeline = document.getElementById('modal-timeline-content');
+      timeline.innerHTML = 'Loading timeline...';
+      
+      const events = await fetchJSON(`/api/nodes/${node}/details`);
+      timeline.innerHTML = '';
+      if (!events || events.length === 0) {
+        timeline.innerHTML = '<div style="color:var(--text-muted)">No recent events found.</div>';
+      } else {
+        events.forEach(e => {
+          const div = document.createElement('div');
+          div.className = 'timeline-item';
+          div.innerHTML = `<span style="color:var(--text-muted)">[${fmtShort(e.timestamp)}]</span> 
+                           Score +${e.weighted_score.toFixed(1)} 
+                           <br/><span style="color:var(--text-dim)">${e.reasons.join(', ')}</span>`;
+          timeline.appendChild(div);
+        });
+      }
+    }
+
+    function closeModal() {
+      document.getElementById('human-modal').style.display = 'none';
+      isModalOpen = false;
+      tick();
+    }
+
+    async function approveNode() {
+      const node = document.getElementById('modal-node-name').innerText;
+      closeModal();
+      await fetch(`/api/nodes/${node}/approve`, { method: 'POST' });
+      tick();
+    }
+
+    async function restartNode(node) {
+      if(confirm(`Restart node ${node}? This will remove isolation and start the container.`)) {
+        await fetch(`/api/nodes/${node}/restart`, { method: 'POST' });
+        tick();
+      }
+    }
+
+    async function resetSystem() {
+      if(confirm("Are you sure you want to reset the entire system? All events and scores will be cleared.")) {
+        document.body.style.opacity = '0.5';
+        await fetch(`/api/reset`, { method: 'POST' });
+        setTimeout(() => location.reload(), 2000);
+      }
+    }
+
+    tick();
+    setInterval(tick, 5000);
+
   </script>
+
+  <!-- Human Review Modal -->
+  <div id="human-modal" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">⚠ Human Review Required: <span id="modal-node-name"></span></div>
+      <p style="color:var(--text-dim); font-size:0.9rem;">
+        This node has been paused and network-isolated pending your review.
+        <br/><em>Note: In case of CRITICAL escalation, this review may be overridden automatically.</em>
+      </p>
+      <div class="modal-timeline" id="modal-timeline-content"></div>
+      <button class="btn-approve" onclick="approveNode()">Approve Node</button>
+      <button class="btn-close-modal" onclick="closeModal()">Close</button>
+    </div>
+  </div>
+
 </body>
 
 </html>

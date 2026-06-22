@@ -113,6 +113,11 @@ class Router:
         try:
             container = client.containers.get(node)
             container.reload()
+            
+            if container.status != "paused":
+                container.pause()
+                log.warning(f"Node {node} paused via Docker SDK.")
+
             networks = container.attrs.get("NetworkSettings", {}).get("Networks", {})
             mgmt_network = networks.get("mgmt-net")
             if mgmt_network and mgmt_network.get("IPAddress"):
@@ -131,16 +136,8 @@ class Router:
                 log.error(f"Cannot isolate {node}: no container IP found")
                 return
 
-            drop_rule = ["iptables", "-C", "FORWARD", "-s", container_ip, "-j", "DROP"]
-            insert_rule = [
-                "iptables",
-                "-I",
-                "FORWARD",
-                "-s",
-                container_ip,
-                "-j",
-                "DROP",
-            ]
+            drop_rule   = ["iptables", "-C", "FORWARD", "-s", container_ip, "-j", "DROP"]
+            insert_rule = ["iptables", "-I", "FORWARD", "-s", container_ip, "-j", "DROP"]
 
             check_result = subprocess.run(drop_rule, capture_output=True, text=True)
             if check_result.returncode != 0:
@@ -150,6 +147,10 @@ class Router:
                 f"Node {node} isolated with iptables DROP rule "
                 f"(container_ip={container_ip})"
             )
+            
+            if self._store:
+                self._store.set_isolated_ip(node, container_ip)
+                
         except Exception as e:
             log.error(f"Isolation failed for {node}: {e}")
 

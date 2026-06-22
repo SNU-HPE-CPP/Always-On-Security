@@ -24,6 +24,7 @@ from router import Router
 from pipeline import Pipeline
 from threat_detector import ThreatDetector
 from alert_manager import AlertManager
+from cmd_server import run_cmd_server
 
 logging.basicConfig(
     level=logging.INFO,
@@ -76,6 +77,10 @@ def heartbeat_checker(
         now = datetime.now()
         with node_last_seen_lock:
             for node in NODE_LIST:
+                status = store.get_node_status(node)
+                if status in ("awaiting_approval", "quarantined", "unresponsive"):
+                    continue
+
                 last = node_last_seen.get(node)
                 if last is None:
                     continue
@@ -116,8 +121,18 @@ def main():
     threat_detector = ThreatDetector(store)
     alert_manager   = AlertManager(store)
 
-    last_offset = store.last_committed_offset()
-    log.info(f"Risk engine ready — resuming from offset {last_offset}")
+    engine_state = {"last_offset": store.last_committed_offset()}
+    log.info(f"Risk engine ready — resuming from offset {engine_state['last_offset']}")
+
+    # Start cmd server thread
+    cmd_thread = threading.Thread(
+        target=run_cmd_server,
+        args=(store, pipeline.router, engine_state),
+        name="CmdServer",
+        daemon=True,
+    )
+    cmd_thread.start()
+    log.info("Started cmd server thread")
 
     # Start heartbeat checker thread
     hb_thread = threading.Thread(
@@ -149,8 +164,8 @@ def main():
             continue
 
         offset = event["_offset"]
-        if offset <= last_offset:
-            log.debug(f"Skipping replayed offset {offset} (committed={last_offset})")
+        if offset <= engine_state["last_offset"]:
+            log.debug(f"Skipping replayed offset {offset} (committed={engine_state['last_offset']})")
             continue
 
         # Update heartbeat tracking
@@ -171,14 +186,14 @@ def main():
                 "UPDATE engine_offset SET last_committed=? WHERE id=1", (offset,)
             )
             store.conn.commit()
-            last_offset = offset
+            engine_state["last_offset"] = offset
             continue
 
         # ── Standard telemetry pipeline ───────────────────────────────
         try:
             decision = pipeline.process(event)
             store.write_event(event, decision)
-            last_offset = offset
+            engine_state["last_offset"] = offset
 
             # Update node status
             status = "idle"
@@ -186,6 +201,8 @@ def main():
                 status = "busy"
             if decision.bucket == "quarantine":
                 status = "quarantined"
+            elif decision.bucket == "human":
+                status = "awaiting_approval"
             store.update_node_status(
                 node=node,
                 status=status,
