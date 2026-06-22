@@ -361,6 +361,56 @@ def reset_system():
     return _send_cmd({"action": "reset"})
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# API: Attack Simulation
+# ─────────────────────────────────────────────────────────────────────────────
+
+_VALID_ATTACKS = {
+    # node-specific
+    "docker_exec",
+    "runtime_drift_network",
+    "suspicious_restart",
+    "image_mismatch",
+    "multi_signal",
+    # global
+    "config_tamper",
+    "allowlist_tamper",
+    "rogue_node",
+    "replay_attack",
+}
+
+_NODE_SPECIFIC_ATTACKS = {
+    "docker_exec",
+    "runtime_drift_network",
+    "suspicious_restart",
+    "image_mismatch",
+    "multi_signal",
+}
+
+
+@app.route("/api/simulate", methods=["POST"])
+def simulate_attack():
+    body = request.get_json(silent=True) or {}
+
+    attack = body.get("attack", "").strip()
+    node = body.get("node", "").strip() or None
+
+    if attack not in _VALID_ATTACKS:
+        return jsonify({"ok": False, "error": f"Unknown attack type: {attack}"}), 400
+
+    if attack in _NODE_SPECIFIC_ATTACKS:
+        if not node:
+            return jsonify({"ok": False, "error": "This attack requires a target node"}), 400
+        if not re.match(r"^[a-zA-Z0-9_-]{1,32}$", node):
+            return jsonify({"ok": False, "error": "Invalid node name"}), 400
+
+    payload = {"action": "simulate", "attack": attack}
+    if node:
+        payload["node"] = node
+
+    return _send_cmd(payload)
+
+
 @app.route("/api/nodes/<node>/details", methods=["GET"])
 def get_node_details(node):
     if not re.match(r"^[a-zA-Z0-9_-]{1,32}$", node):

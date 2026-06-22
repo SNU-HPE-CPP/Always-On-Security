@@ -230,6 +230,7 @@ def main():
     node_source_addrs: dict[str, str] = {}
 
     rogue_blacklist = load_blacklist()
+    flood_alerted: dict[str, float] = {}  # node → timestamp of last FLOOD_ATTACK alert
     offset = load_offset()
     log.info(f"Controller starting at offset {offset}")
     log.info(f"Allowed nodes: {allowed or '(all — no allowlist configured)'}")
@@ -330,22 +331,25 @@ def main():
         # ── CHECK 4: Message Flooding ──────────────────────────────────
         is_flooding, msg_count = flood_guard.check(node)
         if is_flooding:
-            log.warning(f"[FLOOD_DETECTED] node={node} sent {msg_count} msgs/60s (max={flood_max})")
-            # Note: we still forward the original message but ALSO send an alert.
-            # FIX #7: Do NOT increment offset here — it was already incremented
-            # before CHECK 1. A second increment caused offsets to skip values,
-            # breaking replay deduplication and warm-restart in the risk engine.
-            alert = _make_security_alert(
-                node=node,
-                threat_type="FLOOD_ATTACK",
-                severity="MEDIUM",
-                description=f"Message flooding from node={node}: {msg_count} msgs in 60s",
-                evidence={"node": node, "count": msg_count, "threshold": flood_max},
-                recommended_action="Rate-limit or quarantine node. Investigate DoS intent.",
-                offset=offset,
-            )
-            save_offset(offset)
-            fwd.send_json(alert)
+            # Suppress repeated FLOOD_ATTACK alerts for the same node.
+            # Emit at most ONE alert per node per 60s window to prevent
+            # the alert-generation itself from creating an infinite loop.
+            now_ts = time.time()
+            last_flood_ts = flood_alerted.get(node, 0.0)
+            if now_ts - last_flood_ts >= 60:
+                flood_alerted[node] = now_ts
+                log.warning(f"[FLOOD_DETECTED] node={node} sent {msg_count} msgs/60s (max={flood_max})")
+                alert = _make_security_alert(
+                    node=node,
+                    threat_type="FLOOD_ATTACK",
+                    severity="MEDIUM",
+                    description=f"Message flooding from node={node}: {msg_count} msgs in 60s",
+                    evidence={"node": node, "count": msg_count, "threshold": flood_max},
+                    recommended_action="Rate-limit or quarantine node. Investigate DoS intent.",
+                    offset=offset,
+                )
+                save_offset(offset)
+                fwd.send_json(alert)
             # Continue processing original message (don't drop — may be legitimate)
 
         # ── CHECK 5: Node Impersonation (machine_id change) ────────────
