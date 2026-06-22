@@ -11,10 +11,20 @@ def run_cmd_server(store, router, engine_state):
     Background thread to process ZMQ REQ commands from the dashboard.
     engine_state is a dict containing {"last_offset": <int>}
     """
-    ctx = zmq.Context.instance()
-    sock = ctx.socket(zmq.REP)
-    sock.bind("tcp://*:5557")
-    log.info("ZMQ command server listening on tcp://*:5557")
+    try:
+        log.info("Entering run_cmd_server")
+
+        ctx = zmq.Context.instance()
+
+        sock = ctx.socket(zmq.REP)
+
+        sock.bind("tcp://*:5557")
+
+        log.info("ZMQ command server listening on tcp://*:5557")
+
+    except Exception as e:
+        log.exception("Failed starting command server")
+        raise
 
     while True:
         try:

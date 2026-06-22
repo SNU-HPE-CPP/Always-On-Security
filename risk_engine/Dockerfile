@@ -41,7 +41,5 @@ ENV SERVICE_NAME=risk-engine
 # Allow first-deployment without a manifest (set to false once baseline is committed)
 ENV INTEGRITY_ALLOW_MISSING_MANIFEST=true
 
-USER appuser
-
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python", "engine.py"]

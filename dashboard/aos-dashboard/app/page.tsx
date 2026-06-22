@@ -1,0 +1,50 @@
+import { DashboardHeader } from "@/components/dashboard/dashboard-header";
+import { StatCards } from "@/components/dashboard/stat-cards";
+import { ThreatDistribution } from "@/components/dashboard/threat-distribution";
+import { SeverityBreakdown } from "@/components/dashboard/severity-breakdown";
+import { RecentAlerts } from "@/components/dashboard/recent-alerts";
+import { HighRiskNodes } from "@/components/dashboard/high-risk-nodes";
+
+export default function DashboardPage() {
+  return (
+    <div className="relative min-h-screen bg-zinc-950">
+      {/* Background Effects */}
+      <div className="fixed inset-0 -z-10 overflow-hidden">
+        <div className="absolute left-0 top-0 h-96 w-96 rounded-full bg-blue-500/10 blur-3xl" />
+        <div className="absolute right-0 top-0 h-96 w-96 rounded-full bg-cyan-500/10 blur-3xl" />
+        <div className="absolute bottom-0 left-1/3 h-96 w-96 rounded-full bg-purple-500/5 blur-3xl" />
+      </div>
+
+      <div className="mx-auto max-w-7xl p-8 space-y-8">
+        {/* Header */}
+        <DashboardHeader />
+
+        {/* Title */}
+        <div>
+          <h1 className="text-4xl font-bold tracking-tight text-white">
+            Security Operations Center
+          </h1>
+
+          <p className="mt-2 text-zinc-400">
+            Always-On Security Monitoring Dashboard
+          </p>
+        </div>
+
+        {/* Stat Cards */}
+        <StatCards />
+
+        {/* Charts */}
+        <div className="grid gap-6 xl:grid-cols-2">
+          <ThreatDistribution />
+          <SeverityBreakdown />
+        </div>
+
+        {/* Alerts + Nodes */}
+        <div className="grid gap-6 xl:grid-cols-2">
+          <RecentAlerts />
+          <HighRiskNodes />
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -81,6 +81,23 @@ services:
     ports:
       - "5000:5000"
 
+  aos-frontend:
+    build:
+      context: ./dashboard/aos-dashboard
+      dockerfile: Dockerfile
+    container_name: aos-frontend
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+    depends_on:
+      - dashboard
+    networks:
+      host-access:
+      mgmt-net:
+        ipv4_address: 10.10.3.30
+    ports:
+      - "3000:3000"
+
   # ── Tenant Workload Nodes (Workload_Zone) ──────────────────────────
   # Principle of least privilege:
   #   • No HMAC_SECRET — tenants have zero visibility into the security bus
@@ -267,6 +284,8 @@ networks:
   # No other services join this network, so it doesn't widen the attack surface.
   host-access:
     driver: bridge
+    
+    
 
 volumes:
   shared_data:
