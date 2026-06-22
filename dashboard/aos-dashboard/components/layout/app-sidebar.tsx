@@ -7,8 +7,8 @@ import {
   LayoutDashboard,
   ShieldAlert,
   Server,
-  Radar,
   RotateCcw,
+  Swords,
 } from "lucide-react";
 import { useSystemReset } from "@/hooks/useSystemReset";
 import { toast } from "sonner";
@@ -29,11 +29,11 @@ const items = [
     href: "/nodes",
     icon: Server,
   },
-  // {
-  //   title: "Intel",
-  //   href: "/intel",
-  //   icon: Radar,
-  // },
+  {
+    title: "Simulate",
+    href: "/#simulate",
+    icon: Swords,
+  },
 ];
 
 export function AppSidebar() {

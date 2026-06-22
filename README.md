@@ -373,7 +373,7 @@ Services started:
 ### Access Dashboard
 
 ```
-http://localhost:5000
+http://localhost:3000
 ```
 
 The dashboard shows:

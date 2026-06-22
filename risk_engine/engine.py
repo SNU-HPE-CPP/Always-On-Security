@@ -95,6 +95,12 @@ def heartbeat_checker(
                         signal = threat_detector.build_silent_node_signal(node, delta)
                         alert_manager.emit(signal)
                         router._quarantine(node)
+                        # Persist quarantined status so:
+                        #  1. Dashboard shows the node as quarantined (not missing)
+                        #  2. Heartbeat checker skips it next iteration
+                        #  3. Simulator's _wait_for_running can start it if needed
+                        store.update_node_status(node=node, status="quarantined", risk_score=0.0)
+                        log.info(f"Node {node} status set to quarantined in store")
                     except Exception as e:
                         log.error(f"Heartbeat processing error: {e}")
         time.sleep(10)

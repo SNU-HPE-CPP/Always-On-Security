@@ -3,6 +3,7 @@ import logging
 import threading
 import subprocess
 import os
+import simulator
 
 log = logging.getLogger("cmd_server")
 
@@ -144,6 +145,12 @@ def run_cmd_server(store, router, engine_state):
                 
                 _do_reset()
                 sock.send_json({"ok": True})
+
+            elif action == "simulate":
+                attack = req.get("attack", "")
+                node   = req.get("node")   # may be None for global attacks
+                result = simulator.dispatch(attack=attack, node=node, store=store)
+                sock.send_json(result)
 
             else:
                 sock.send_json({"ok": False, "error": "Unknown action"})
