@@ -82,20 +82,20 @@ services:
       - "5000:5000"
 
   aos-frontend:
-      build:
-        context: ./dashboard/aos-dashboard
-        dockerfile: Dockerfile
-      container_name: aos-frontend
-      restart: unless-stopped
-      environment:
+    build:
+      context: ./dashboard/aos-dashboard
+      dockerfile: Dockerfile
+    container_name: aos-frontend
+    restart: unless-stopped
+    environment:
       - NODE_ENV=production
-      depends_on:
+    depends_on:
       - dashboard
-      networks:
-        host-access:
-        mgmt-net:
-          ipv4_address: 10.10.3.30
-      ports:
+    networks:
+      host-access:
+      mgmt-net:
+        ipv4_address: 10.10.3.30
+    ports:
       - "3000:3000"
 
   # ── Tenant Workload Nodes (Workload_Zone) ──────────────────────────
