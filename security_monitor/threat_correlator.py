@@ -66,14 +66,30 @@ class ThreatCorrelator:
                 node = event.get("node")
                 if node not in self.docker_history:
                     self.docker_history[node] = deque()
-                
+
                 # Evict old events
                 dq = self.docker_history[node]
                 while dq and now - dq[0][0] > CORRELATION_WINDOW:
                     dq.popleft()
-                    
+
                 dq.append((now, event))
                 log.debug(f"Cached Docker event for {node}: {event.get('action')}")
+
+                # Forward docker events that carry an explicit threat_type immediately
+                # without waiting for a network event to trigger correlation.
+                threat = event.get("threat_type")
+                if threat in ("CONTAINER_EXEC", "UNEXPECTED_EXEC",
+                              "SUSPICIOUS_RESTART_PATTERN", "UNEXPECTED_NETWORK_ATTACH",
+                              "CONTAINER_RENAME"):
+                    self.output_queue.put({
+                        "node_id":     node,
+                        "threat_type": threat,
+                        "severity":    "HIGH",
+                        "description": f"Docker behavioural threat detected: {threat} on {node}",
+                        "correlated":  0,
+                        "evidence":    {"docker_event": event},
+                    })
+                    log.warning(f"[DIRECT] {threat} on {node} forwarded to pipeline")
                 
             elif source in ["suricata", "zeek", "falco"]:
                 # Try to map IP or container name to node name
