@@ -233,7 +233,7 @@ services:
     volumes:
       - shared_data:/var/log/shared
       - ./risk_engine/config:/opt/security/config:ro
-      - falco_logs:/var/log/falco:ro
+      - /var/log/falco:/var/log/falco:ro
     networks:
       compute-net:
         ipv4_address: 10.10.1.250
@@ -242,47 +242,24 @@ services:
       mgmt-net:
         ipv4_address: 10.10.3.250
 
-  # ── Falco (Infrastructure_Zone) ────────────────────────────────────
-  # DISABLED: falcosecurity/falco:0.39.2 modern BPF probe does not
-  # support Linux kernel 6.19.x (scap_init failure).
+  # ── Falco (host-native, kernel-level syscall monitor) ─────────────────────
+  # Falco 0.44.1 (modern eBPF) is installed natively on the host and writes
+  # JSON events to /var/log/falco/events.json.  security-monitor mounts this
+  # path read-only (bind mount below) so falco_collector.py can tail it without
+  # any containerised Falco process.
   #
-  # To enable Falco, install it natively on the host:
-  #   yay -S falco-bin
+  # Confirmed working: Falco 0.44.1 + Linux 6.11.0-19-generic (Ubuntu 24.04).
+  #
+  # To run Falco as a host service:
   #   sudo falco --modern-bpf \
   #     -o json_output=true \
   #     -o file_output.enabled=true \
-  #     -o file_output.filename=/var/log/falco/events.json
+  #     -o file_output.filename=/var/log/falco/events.json \
+  #     -o file_output.keep_alive=true
   #
-  # Then replace the falco_logs named volume in security-monitor with
-  # a host bind mount:
+  # A containerised Falco service is not required: the bind mount
   #   - /var/log/falco:/var/log/falco:ro
-  #
-  # Uncomment this block when a Falco release supports kernel 6.19+.
-  #
-  # falco:
-  #   image: falcosecurity/falco:0.39.2
-  #   container_name: falco
-  #   privileged: true
-  #   pid: host
-  #   environment:
-  #     - FALCO_DRIVER_CHOICE=modern_ebpf
-  #     - FALCO_JSON_OUTPUT=true
-  #     - FALCO_FILE_OUTPUT_ENABLED=true
-  #     - FALCO_FILE_OUTPUT_FILENAME=/var/log/falco/events.json
-  #     - FALCO_FILE_OUTPUT_KEEP_ALIVE=true
-  #     - FALCO_JSON_INCLUDE_OUTPUT_PROPERTY=true
-  #   volumes:
-  #     - /var/run/docker.sock:/host/var/run/docker.sock:ro
-  #     - /dev:/host/dev:ro
-  #     - /proc:/host/proc:ro
-  #     - /boot:/host/boot:ro
-  #     - /lib/modules:/host/lib/modules:ro
-  #     - /usr:/host/usr:ro
-  #     - /sys/kernel/btf/vmlinux:/sys/kernel/btf/vmlinux:ro
-  #     - falco_logs:/var/log/falco
-  #   networks:
-  #     mgmt-net:
-  #       ipv4_address: 10.10.3.45
+  # on security-monitor provides the same event stream to falco_collector.py.
 
 networks:
   compute-net:
@@ -306,9 +283,7 @@ networks:
   # Non-internal bridge used exclusively to publish the dashboard port to the host.
   # No other services join this network, so it doesn't widen the attack surface.
   host-access:
-    driver: bridge
-    
-    
+    driver: bridge   
 
 volumes:
   shared_data:
