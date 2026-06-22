@@ -233,6 +233,14 @@ When a threat matches a specific policy or the node's cumulative risk score exce
 - **Network Isolate**: Calls the Docker SDK to disconnect the container from `compute-net` and `storage-net`.
 - **iptables Shield**: Installs `iptables` FORWARD rules on the host bridge interface to block all packets from the target container's IP.
 
+### Recovery Mechanisms & Command Bus Execution
+
+When an operator issues a recovery action via the Dashboard UI, the Dashboard does not modify the database directly. Instead, it acts as a ZMQ `REQ` client, transmitting a JSON payload to the Risk Engine (`REP` server on port 5557). The Risk Engine executes the command securely:
+
+- **Approve Node** (`{"action": "approve", "node": "<name>"}`): The Risk Engine receives the command, retrieves any `isolated_ip`, flushes host-level `iptables` isolation rules, unpauses the container via the Docker API, zeroes the risk score, and securely updates the database to transition the node back to an active `idle` state.
+- **Restart Node** (`{"action": "restart", "node": "<name>"}`): Used for unresponsive or heavily quarantined nodes. Upon receiving the ZMQ command, the Risk Engine unpauses the container (if paused to prevent lock-ups), clears `iptables` isolation rules, zeroes the node's risk score in the DB, and issues a hard Docker container restart (`container.restart()`) to recover the workload securely.
+- **Reset System** (`{"action": "reset"}`): Triggered to reset the entire cluster simulation. The Risk Engine receives the command and performs an atomic cluster state wipe. It truncates all SQLite tables (historical events, status, forensics), resets the event offsets, dynamically flushes all `iptables` isolations across all nodes, and hard-restarts all tenant workload containers to yield a fresh environment.
+
 ### Enforcement Strategies
 
 ```mermaid
@@ -250,11 +258,17 @@ graph TD
 
     ThresholdCheck -- "silent (0-30)" --> Decay[Apply -5.0 Decay/Cycle]
     ThresholdCheck -- "auto (31-70)" --> AlertWarn[Wazuh WARNING Log]
-    ThresholdCheck -- "human (71-100)" --> AlertHigh[Wazuh HIGH Log + Pause Node + Network Isolate]
+    ThresholdCheck -- "human (71-100)" --> AlertHigh[Wazuh HIGH Log + Pause Node + Await Human Review]
     ThresholdCheck -- "quarantine (>100)" --> AlertCrit[Wazuh CRITICAL Log + Stop Node + Full Quarantine]
 
     AlertHigh & AlertCrit --> DockerSDK & HostIptables
 ```
+
+### Dashboard Secure Command Bus (ZMQ REQ/REP)
+
+To preserve the fundamental security requirement that the Dashboard must remain **strictly read-only** concerning the centralized event database (`events.db`), we utilize a secure ZeroMQ Command Bus.
+
+Rather than the dashboard issuing direct database writes to mutate node state or running background remediation scripts, it functions as a lightweight ZMQ `REQ` client. It dispatches commands (`approve`, `restart`, `reset`) over the isolated `mgmt-net` on port 5557 to the Risk Engine (`REP` server). The Risk Engine validates the request, executes the necessary Docker API and `iptables` maneuvers, and securely updates the database schema.
 
 #### A. Fast-Path Enforcement (`fast_path_policy.yaml`)
 
@@ -271,8 +285,8 @@ Handles multi-alert escalation over time:
 
 - **`silent` [0 - 30]**: No enforcement. Event score decays by `-5.0` per cycle.
 - **`auto` [31 - 70]**: Triggers a Wazuh warning.
-- **`human` [71 - 100]**: Triggers a high-severity alert, pauses the container, and disconnects it from network interfaces.
-- **`quarantine` [> 100]**: Triggers a critical SIEM event and stops container execution.
+- **`human` [71 - 100]**: Triggers a high-severity alert, pauses the container (Docker SDK `pause()`), and isolates it using strict host-level `iptables` DROP rules. The node enters the `awaiting_approval` state, exempting it from normal heartbeat timeouts. A human NOC operator must review the timeline in the Dashboard and issue an `Approve Node` command. The Risk Engine receives this command, automatically flushes the specific iptables rules, zeroes the risk score, and unpauses the container.
+- **`quarantine` [> 100]**: Triggers a critical SIEM event and stops container execution. Operators can issue a `Restart` command via the dashboard to completely reboot the isolated container, removing isolation, or a `Reset System` command to clear all state and database tables across the cluster.
 
 ---
 

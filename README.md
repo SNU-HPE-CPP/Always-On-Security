@@ -273,7 +273,7 @@ No enforcement action executes code, modifies files, or kills processes inside a
 | ------------ | ----------- | ------------------------------ |
 | `silent`     | 0–30        | Monitor only                   |
 | `auto`       | 31–70       | Wazuh alert + auto-remediation |
-| `human`      | 71–100      | Pause + human review           |
+| `human`      | 71–100      | Pause + isolate + human review via Dashboard |
 | `quarantine` | > 100       | Stop + network isolate         |
 
 Scores decay at 5.0 per cycle when no rules match (self-healing after threat activity subsides).
@@ -600,6 +600,13 @@ The core monitoring architecture has been significantly hardened to simulate an 
   - **Recent security alerts** — the last 20 security alerts for the node pulled from the DB.
   - **Recent telemetry events** — the last 20 risk-scored events from the `events` table.
   - Evidence is written to **two independent locations**: the `forensic_snapshots` SQLite table (queryable by the dashboard) and a timestamped JSON file under the persistent `/data/forensics` volume (survives container removal and DB resets).
+
+- **8. Human-in-the-Loop & System Control Bus**
+  The `human` risk bucket now fully implements an interactive NOC review workflow:
+  - When a node reaches the human review threshold, the Risk Engine pauses the container and isolates it via `iptables`, marking the node as `awaiting_approval`.
+  - The Dashboard features an interactive Human Review Modal to inspect the incident timeline.
+  - Operations staff can safely issue `Approve`, `Restart`, and `Reset` commands from the Dashboard UI. 
+  - **Zero Trust UI**: To guarantee the Dashboard remains absolutely read-only regarding the SQLite database, these commands are dispatched over an isolated ZeroMQ `REQ/REP` command bus on port 5557 directly to the Risk Engine, which securely executes the Docker/iptables mitigation logic and updates the database schema.
 
 ---
 
