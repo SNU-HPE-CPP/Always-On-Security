@@ -20,6 +20,7 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV CI=true
+ENV BACKEND_URL=http://dashboard:5000
 
 RUN corepack enable
 
