@@ -283,9 +283,7 @@ networks:
   # Non-internal bridge used exclusively to publish the dashboard port to the host.
   # No other services join this network, so it doesn't widen the attack surface.
   host-access:
-    driver: bridge
-    
-    
+    driver: bridge   
 
 volumes:
   shared_data:
