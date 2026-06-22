@@ -284,8 +284,6 @@ networks:
   # No other services join this network, so it doesn't widen the attack surface.
   host-access:
     driver: bridge
-    
-    
 
 volumes:
   shared_data:
