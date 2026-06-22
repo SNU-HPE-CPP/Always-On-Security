@@ -126,6 +126,55 @@ export default function NodeDetailsPage({
           </Card>
         </div>
 
+        {/* SECURITY METRICS */}
+        <div>
+          <h2 className="mb-4 text-xl font-semibold text-white">
+            Security Metrics
+          </h2>
+
+          <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-5">
+            <Card className="border-zinc-800 bg-zinc-900 p-6">
+              <div className="text-sm text-zinc-500">Silent Events</div>
+
+              <div className="mt-2 text-4xl font-bold text-orange-400">
+                {security?.silent_count ?? 0}
+              </div>
+            </Card>
+
+            <Card className="border-zinc-800 bg-zinc-900 p-6">
+              <div className="text-sm text-zinc-500">Flood Attacks</div>
+
+              <div className="mt-2 text-4xl font-bold text-red-400">
+                {security?.flood_count ?? 0}
+              </div>
+            </Card>
+
+            <Card className="border-zinc-800 bg-zinc-900 p-6">
+              <div className="text-sm text-zinc-500">Replay Attempts</div>
+
+              <div className="mt-2 text-4xl font-bold text-yellow-400">
+                {security?.replay_count ?? 0}
+              </div>
+            </Card>
+
+            <Card className="border-zinc-800 bg-zinc-900 p-6">
+              <div className="text-sm text-zinc-500">Config Tampering</div>
+
+              <div className="mt-2 text-4xl font-bold text-purple-400">
+                {security?.config_tamper_count ?? 0}
+              </div>
+            </Card>
+
+            <Card className="border-zinc-800 bg-zinc-900 p-6">
+              <div className="text-sm text-zinc-500">Lateral Movement</div>
+
+              <div className="mt-2 text-4xl font-bold text-cyan-400">
+                {security?.lateral_movement_count ?? 0}
+              </div>
+            </Card>
+          </div>
+        </div>
+
         {/* NODE IDENTITY */}
         <Card className="border-zinc-800 bg-zinc-900 p-6">
           <h2 className="mb-6 text-lg font-semibold text-white">

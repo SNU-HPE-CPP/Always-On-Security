@@ -50,16 +50,14 @@ export function NodeActions({ node, status }: Props) {
         </Button>
       )}
 
-      {["quarantined", "unresponsive"].includes(status ?? "") && (
-        <Button
-          onClick={handleRestart}
-          disabled={restartMutation.isPending}
-          variant="destructive"
-        >
-          <RotateCcw className="mr-2 h-4 w-4" />
-          Restart
-        </Button>
-      )}
+      <Button
+        onClick={handleRestart}
+        disabled={restartMutation.isPending}
+        variant="destructive"
+      >
+        <RotateCcw className="mr-2 h-4 w-4" />
+        Restart
+      </Button>
     </div>
   );
 }
