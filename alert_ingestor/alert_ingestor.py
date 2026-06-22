@@ -11,10 +11,11 @@ sock.bind((HOST, PORT))
 
 DB_PATH = "/data/events.db"
 
+
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     conn.execute("""
-        CREATE TABLE IF NOT EXISTS wazuh_alerts (
+        CREATE TABLE IF NOT EXISTS alert_ingestor_alerts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp TEXT NOT NULL,
             source TEXT,
@@ -27,9 +28,12 @@ def init_db():
     conn.commit()
     conn.close()
 
+
 init_db()
 
-print(f"[WAZUH] Mock Wazuh Manager listening on UDP {PORT} and saving to SQLite")
+print(
+    f"[alert_ingestor] Mock alert_ingestor Manager listening on UDP {PORT} and saving to SQLite"
+)
 
 while True:
 
@@ -40,7 +44,7 @@ while True:
         alert = json.loads(data.decode())
 
         print("\n" + "=" * 70)
-        print("WAZUH SECURITY ALERT")
+        print("alert_ingestor SECURITY ALERT")
         print("=" * 70)
 
         print(f"Time       : {datetime.now()}")
@@ -59,17 +63,20 @@ while True:
         # Save to SQLite
         try:
             conn = sqlite3.connect(DB_PATH)
-            conn.execute("""
-                INSERT INTO wazuh_alerts (timestamp, source, severity, node, risk_score, reasons)
+            conn.execute(
+                """
+                INSERT INTO alert_ingestor_alerts (timestamp, source, severity, node, risk_score, reasons)
                 VALUES (?, ?, ?, ?, ?, ?)
-            """, (
-                datetime.now().isoformat(),
-                alert.get("source"),
-                alert.get("severity"),
-                alert.get("node"),
-                alert.get("risk_score"),
-                json.dumps(alert.get("reasons", []))
-            ))
+            """,
+                (
+                    datetime.now().isoformat(),
+                    alert.get("source"),
+                    alert.get("severity"),
+                    alert.get("node"),
+                    alert.get("risk_score"),
+                    json.dumps(alert.get("reasons", [])),
+                ),
+            )
             conn.commit()
             conn.close()
         except Exception as db_e:

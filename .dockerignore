@@ -20,8 +20,8 @@ __pycache__/
 # Exclude node_agent build context from root builds (node_agent uses its own context)
 node_agent/
 
-# Exclude wazuh build context from root builds (wazuh uses its own context)
-wazuh/
+# Exclude alert_ingestor build context from root builds (alert_ingestor uses its own context)
+alert_ingestor/
 
 # README and docs — not needed at runtime
 README*.md

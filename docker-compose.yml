@@ -169,10 +169,10 @@ services:
       mgmt-net:
         ipv4_address: 10.10.3.12
 
-  wazuh:
+  alert_ingestor:
     build:
-      context: wazuh
-    container_name: wazuh
+      context: alert_ingestor
+    container_name: alert_ingestor
     volumes:
       - shared_data:/data
     networks:
@@ -208,7 +208,7 @@ services:
       - DOCKER_HOST=tcp://docker-socket-proxy:2375
       - FALCO_OUTPUT_FILE=/var/log/falco/events.json
     depends_on:
-      - wazuh
+      - alert_ingestor
       - controller
       - docker-socket-proxy
     volumes:

@@ -22,7 +22,7 @@ import psutil
 SERVICE_ALLOWLIST = {
     "compute-net": {22, 50000, 50001, 50002},
     "storage-net": {22, 2049},
-    "mgmt-net": {22, 5514, 5555, 5556},  # 5514 = wazuh mock syslog (non-root)
+    "mgmt-net": {22, 5514, 5555, 5556},  # 5514 = alert_ingestor mock syslog (non-root)
 }
 
 EXPECTED_PORTS = {22, 2049, 5514, 5555, 5556, 50000, 50001, 50002}
@@ -75,29 +75,38 @@ def main() -> int:
                     listeners.append({"port": port, "pid": conn.pid})
 
             if listeners:
-                _emit(notice_path, {
+                _emit(
+                    notice_path,
+                    {
+                        "ts": datetime.utcnow().isoformat() + "Z",
+                        "host": hostname,
+                        "notice": "Unexpected listening ports detected",
+                        "listeners": listeners,
+                        "type": "zeek_notice",
+                    },
+                )
+
+            _emit(
+                conn_path,
+                {
                     "ts": datetime.utcnow().isoformat() + "Z",
                     "host": hostname,
-                    "notice": "Unexpected listening ports detected",
-                    "listeners": listeners,
-                    "type": "zeek_notice",
-                })
-
-            _emit(conn_path, {
-                "ts": datetime.utcnow().isoformat() + "Z",
-                "host": hostname,
-                "type": "zeek_conn",
-                "pairs": [],
-                "allowlist": {k: sorted(v) for k, v in SERVICE_ALLOWLIST.items()},
-            })
+                    "type": "zeek_conn",
+                    "pairs": [],
+                    "allowlist": {k: sorted(v) for k, v in SERVICE_ALLOWLIST.items()},
+                },
+            )
 
         except Exception as exc:
-            _emit(notice_path, {
-                "ts": datetime.utcnow().isoformat() + "Z",
-                "host": hostname,
-                "notice": f"Zeek shim error: {exc}",
-                "type": "zeek_notice",
-            })
+            _emit(
+                notice_path,
+                {
+                    "ts": datetime.utcnow().isoformat() + "Z",
+                    "host": hostname,
+                    "notice": f"Zeek shim error: {exc}",
+                    "type": "zeek_notice",
+                },
+            )
 
         time.sleep(10)
 

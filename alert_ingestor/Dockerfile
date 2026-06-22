@@ -12,4 +12,4 @@ RUN chown -R appuser:appgroup /app
 
 USER appuser
 
-CMD ["python", "wazuh.py"]
+CMD ["python", "alert_ingestor.py"]

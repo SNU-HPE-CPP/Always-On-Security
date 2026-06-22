@@ -272,7 +272,7 @@ so that tenant-adjacent containers do not run as root.
    the logic moves to the Host_Observer or Security_Monitor running with appropriate Linux
    capabilities, and the Tenant_Container drops to a non-root unprivileged user.
 
-3. THE Strategy SHALL confirm that `controller`, `dashboard`, `risk_engine`, and `wazuh`
+3. THE Strategy SHALL confirm that `controller`, `dashboard`, `risk_engine`, and `alert_ingestor`
    Dockerfiles have already been migrated to non-root `appuser` as documented in
    `NON_ROOT_USER_ANALYSIS.md`, and classify these as Compliant.
 
@@ -403,9 +403,9 @@ enforces at the container and network level without any in-tenant intervention.
    (a) Pause container — `container.pause()` via Docker API, existing in `router.py`
    (b) Stop container — `container.stop()` via Docker API, existing in `router.py`
    (c) Quarantine network — iptables DROP rules for the container's source IP on all segments,
-       implemented in a new `network_isolator.py` module in Risk_Engine or Security_Monitor
+   implemented in a new `network_isolator.py` module in Risk_Engine or Security_Monitor
    (d) Isolate node — disconnect container from compute-net and storage-net while preserving
-       mgmt-net connectivity for forensic access, via Docker network disconnect API
+   mgmt-net connectivity for forensic access, via Docker network disconnect API
 
 3. THE Review SHALL specify that enforcement actions (c) and (d) require `CAP_NET_ADMIN` on
    the enforcing container, document which container holds that capability in the current
@@ -610,4 +610,3 @@ opportunities, so that the code generation baseline is clean and unambiguous.
    provide the specific lines or functions to remove, the residual interface that must be
    preserved (ZMQ send format, field names consumed downstream), and the regression test
    that confirms the downstream consumer still functions correctly after simplification.
-

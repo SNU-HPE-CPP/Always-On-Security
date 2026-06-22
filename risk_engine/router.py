@@ -9,8 +9,10 @@ from network_isolator import NetworkIsolator
 
 log = logging.getLogger(__name__)
 
-WAZUH_MANAGER_IP = "wazuh"
-WAZUH_PORT = 5514  # Wazuh mock listens on 5514 (non-root); real Wazuh uses 514 (root/privileged)
+ALERT_INGESTOR_MANAGER_IP = "alert_ingestor"
+ALERT_INGESTOR_PORT = (
+    5514  # Wazuh mock listens on 5514 (non-root); real Wazuh uses 514 (root/privileged)
+)
 
 # Directory where forensic JSON artefacts are written (survives container restart)
 FORENSICS_DIR = Path(os.getenv("FORENSICS_DIR", "/data/forensics"))
@@ -30,6 +32,7 @@ class Router:
         if self._docker is None:
             try:
                 import docker
+
                 self._docker = docker.from_env()
             except Exception as e:
                 log.error(f"Docker client init failed: {e}")
@@ -37,12 +40,12 @@ class Router:
 
     def dispatch(self, decision) -> None:
 
-        node        = decision.node
-        bucket      = decision.bucket
-        score       = decision.cumulative_score
-        corr_tag    = " [CORRELATED]" if decision.correlated else ""
-        rule_ids    = [r[0] for r in decision.matched_rules]
-        reasons     = decision.raw_event.get("reasons", [])
+        node = decision.node
+        bucket = decision.bucket
+        score = decision.cumulative_score
+        corr_tag = " [CORRELATED]" if decision.correlated else ""
+        rule_ids = [r[0] for r in decision.matched_rules]
+        reasons = decision.raw_event.get("reasons", [])
 
         log.info(
             f"[{bucket.upper()}]{corr_tag} "
@@ -57,17 +60,25 @@ class Router:
 
         elif bucket == "auto":
             log.warning(f"[AUTO-REMEDIATION] node={node} score={score:.2f}")
-            self._send_wazuh_alert(
-                node=node, risk_score=score, reasons=reasons,
-                rule_ids=rule_ids, correlated=decision.correlated, severity="WARNING",
+            self._send_alert_ingestor_alert(
+                node=node,
+                risk_score=score,
+                reasons=reasons,
+                rule_ids=rule_ids,
+                correlated=decision.correlated,
+                severity="WARNING",
             )
 
         elif bucket == "human":
             log.warning(f"[HUMAN_REVIEW] node={node} score={score:.2f}")
             self._pause(node)
-            self._send_wazuh_alert(
-                node=node, risk_score=score, reasons=reasons,
-                rule_ids=rule_ids, correlated=decision.correlated, severity="HIGH",
+            self._send_alert_ingestor_alert(
+                node=node,
+                risk_score=score,
+                reasons=reasons,
+                rule_ids=rule_ids,
+                correlated=decision.correlated,
+                severity="HIGH",
             )
 
         elif bucket == "quarantine":
@@ -83,9 +94,13 @@ class Router:
             )
 
             self._quarantine(node)
-            self._send_wazuh_alert(
-                node=node, risk_score=score, reasons=reasons,
-                rule_ids=rule_ids, correlated=decision.correlated, severity="CRITICAL",
+            self._send_alert_ingestor_alert(
+                node=node,
+                risk_score=score,
+                reasons=reasons,
+                rule_ids=rule_ids,
+                correlated=decision.correlated,
+                severity="CRITICAL",
             )
 
     # ── Enforcement actions ───────────────────────────────────────────────────
@@ -116,8 +131,16 @@ class Router:
                 log.error(f"Cannot isolate {node}: no container IP found")
                 return
 
-            drop_rule   = ["iptables", "-C", "FORWARD", "-s", container_ip, "-j", "DROP"]
-            insert_rule = ["iptables", "-I", "FORWARD", "-s", container_ip, "-j", "DROP"]
+            drop_rule = ["iptables", "-C", "FORWARD", "-s", container_ip, "-j", "DROP"]
+            insert_rule = [
+                "iptables",
+                "-I",
+                "FORWARD",
+                "-s",
+                container_ip,
+                "-j",
+                "DROP",
+            ]
 
             check_result = subprocess.run(drop_rule, capture_output=True, text=True)
             if check_result.returncode != 0:
@@ -166,14 +189,16 @@ class Router:
         """
         log.critical(
             "[FORENSICS] Starting pre-quarantine capture | node=%s trigger=%s score=%.2f",
-            node, trigger, risk_score,
+            node,
+            trigger,
+            risk_score,
         )
 
-        processes    = self._collect_processes(node)
+        processes = self._collect_processes(node)
         network_conns = self._collect_network(node)
         container_state = self._collect_container_state(node)
-        recent_alerts   = self._collect_recent_alerts(node)
-        recent_events   = self._collect_recent_events(node)
+        recent_alerts = self._collect_recent_alerts(node)
+        recent_events = self._collect_recent_events(node)
 
         artifact_path = self._write_forensic_artifact(
             node=node,
@@ -206,7 +231,8 @@ class Router:
 
         log.critical(
             "[FORENSICS] Capture complete | node=%s artifact=%s",
-            node, artifact_path,
+            node,
+            artifact_path,
         )
 
     def _collect_processes(self, node: str) -> list:
@@ -222,18 +248,20 @@ class Router:
             container = client.containers.get(node)
             container.reload()
             result = container.top(ps_args="aux")
-            titles  = result.get("Titles", [])
-            procs   = result.get("Processes", []) or []
-            lines   = []
+            titles = result.get("Titles", [])
+            procs = result.get("Processes", []) or []
+            lines = []
             for row in procs:
                 entry = dict(zip(titles, row))
-                lines.append({
-                    "user":    entry.get("USER", ""),
-                    "pid":     entry.get("PID", ""),
-                    "cpu_pct": entry.get("%CPU", ""),
-                    "mem_pct": entry.get("%MEM", ""),
-                    "command": entry.get("COMMAND", ""),
-                })
+                lines.append(
+                    {
+                        "user": entry.get("USER", ""),
+                        "pid": entry.get("PID", ""),
+                        "cpu_pct": entry.get("%CPU", ""),
+                        "mem_pct": entry.get("%MEM", ""),
+                        "command": entry.get("COMMAND", ""),
+                    }
+                )
             return lines
         except Exception as exc:
             log.warning("[FORENSICS] Process collection failed for %s: %s", node, exc)
@@ -255,17 +283,21 @@ class Router:
             for cmd in (["ss", "-tnp"], ["netstat", "-tnp"]):
                 result = container.exec_run(cmd, demux=False)
                 if result.exit_code == 0:
-                    output = result.output.decode(errors="replace") if result.output else ""
-                    lines  = []
+                    output = (
+                        result.output.decode(errors="replace") if result.output else ""
+                    )
+                    lines = []
                     for line in output.strip().splitlines()[1:]:  # skip header
                         parts = line.split()
                         if len(parts) >= 5:
-                            lines.append({
-                                "state":       parts[0],
-                                "local_addr":  parts[3] if len(parts) > 3 else "",
-                                "remote_addr": parts[4] if len(parts) > 4 else "",
-                                "process":     parts[-1],
-                            })
+                            lines.append(
+                                {
+                                    "state": parts[0],
+                                    "local_addr": parts[3] if len(parts) > 3 else "",
+                                    "remote_addr": parts[4] if len(parts) > 4 else "",
+                                    "process": parts[-1],
+                                }
+                            )
                     return lines
             return [{"error": "ss and netstat both unavailable in container"}]
         except Exception as exc:
@@ -282,32 +314,34 @@ class Router:
             container.reload()
             attrs = container.attrs
             return {
-                "id":       attrs.get("Id", "")[:12],
-                "image":    attrs.get("Config", {}).get("Image", ""),
-                "status":   attrs.get("State", {}).get("Status", ""),
-                "started":  attrs.get("State", {}).get("StartedAt", ""),
-                "pid":      attrs.get("State", {}).get("Pid", ""),
+                "id": attrs.get("Id", "")[:12],
+                "image": attrs.get("Config", {}).get("Image", ""),
+                "status": attrs.get("State", {}).get("Status", ""),
+                "started": attrs.get("State", {}).get("StartedAt", ""),
+                "pid": attrs.get("State", {}).get("Pid", ""),
                 "networks": {
                     net: {
-                        "ip":  info.get("IPAddress"),
+                        "ip": info.get("IPAddress"),
                         "mac": info.get("MacAddress"),
                     }
-                    for net, info in attrs.get(
-                        "NetworkSettings", {}
-                    ).get("Networks", {}).items()
+                    for net, info in attrs.get("NetworkSettings", {})
+                    .get("Networks", {})
+                    .items()
                 },
                 "mounts": [
                     {
-                        "type":   m.get("Type"),
+                        "type": m.get("Type"),
                         "source": m.get("Source"),
-                        "dest":   m.get("Destination"),
-                        "mode":   m.get("Mode"),
+                        "dest": m.get("Destination"),
+                        "mode": m.get("Mode"),
                     }
                     for m in attrs.get("Mounts", [])
                 ],
             }
         except Exception as exc:
-            log.warning("[FORENSICS] Container state collection failed for %s: %s", node, exc)
+            log.warning(
+                "[FORENSICS] Container state collection failed for %s: %s", node, exc
+            )
             return {"error": str(exc)}
 
     def _collect_recent_alerts(self, node: str, limit: int = 20) -> list:
@@ -325,11 +359,14 @@ class Router:
         if self._store is None:
             return []
         try:
-            rows = self._store.conn.execute("""
+            rows = self._store.conn.execute(
+                """
                 SELECT timestamp, event_type, risk_score, bucket, reasons, matched_rules
                 FROM events WHERE node = ?
                 ORDER BY id DESC LIMIT ?
-            """, (node, limit)).fetchall()
+            """,
+                (node, limit),
+            ).fetchall()
             return [dict(r) for r in rows]
         except Exception as exc:
             log.warning("[FORENSICS] Event collection failed for %s: %s", node, exc)
@@ -355,15 +392,15 @@ class Router:
             artifact_path = FORENSICS_DIR / f"{node}_{trigger}_{ts_safe}.json"
             record = {
                 "schema_version": "1.0",
-                "captured_at":    datetime.now(timezone.utc).isoformat(),
-                "node":           node,
-                "trigger":        trigger,
-                "risk_score":     risk_score,
-                "matched_rules":  rule_ids,
-                "reasons":        reasons,
-                "processes":      processes,
+                "captured_at": datetime.now(timezone.utc).isoformat(),
+                "node": node,
+                "trigger": trigger,
+                "risk_score": risk_score,
+                "matched_rules": rule_ids,
+                "reasons": reasons,
+                "processes": processes,
                 "network_connections": network_conns,
-                "container_state":    container_state,
+                "container_state": container_state,
                 "recent_security_alerts": recent_alerts,
                 "recent_telemetry_events": recent_events,
             }
@@ -376,7 +413,7 @@ class Router:
 
     # ── Wazuh SIEM integration ────────────────────────────────────────────────
 
-    def _send_wazuh_alert(
+    def _send_alert_ingestor_alert(
         self,
         node: str,
         risk_score: float,
@@ -387,23 +424,24 @@ class Router:
     ) -> None:
 
         payload = {
-            "source":        "always-on-security",
-            "severity":      severity,
-            "node":          node,
-            "risk_score":    risk_score,
+            "source": "always-on-security",
+            "severity": severity,
+            "node": node,
+            "risk_score": risk_score,
             "matched_rules": rule_ids,
-            "correlated":    correlated,
-            "reasons":       reasons,
+            "correlated": correlated,
+            "reasons": reasons,
         }
 
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.sendto(
                 json.dumps(payload).encode(),
-                (WAZUH_MANAGER_IP, WAZUH_PORT),
+                (ALERT_INGESTOR_MANAGER_IP, ALERT_INGESTOR_PORT),
             )
             sock.close()
-            log.info(f"[WAZUH] Alert sent for {node} (Risk Score: {risk_score})")
+            log.info(
+                f"[ALERT_INGESTOR] Alert sent for {node} (Risk Score: {risk_score})"
+            )
         except Exception as e:
-            log.error(f"[WAZUH] Failed to send alert: {e}")
-
+            log.error(f"[ALERT_INGESTOR] Failed to send alert: {e}")
