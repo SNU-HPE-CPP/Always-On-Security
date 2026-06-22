@@ -225,7 +225,6 @@ services:
       mgmt-net:
         ipv4_address: 10.10.3.250
 
-  # ── Falco (Infrastructure_Zone) ────────────────────────────────────
   # ── Falco (host-native, kernel-level syscall monitor) ─────────────────────
   # Falco 0.44.1 (modern eBPF) is installed natively on the host and writes
   # JSON events to /var/log/falco/events.json.  security-monitor mounts this
