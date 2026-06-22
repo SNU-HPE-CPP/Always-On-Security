@@ -29,11 +29,11 @@ const items = [
     href: "/nodes",
     icon: Server,
   },
-  {
-    title: "Intel",
-    href: "/intel",
-    icon: Radar,
-  },
+  // {
+  //   title: "Intel",
+  //   href: "/intel",
+  //   icon: Radar,
+  // },
 ];
 
 export function AppSidebar() {

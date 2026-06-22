@@ -9,7 +9,7 @@ import { useStats } from "@/hooks/useDashboard";
 
 export function StatCards() {
   const { data } = useStats();
-
+  console.log(data)
   const critical =
     (data?.by_severity?.CRITICAL ?? 0) + (data?.by_severity?.HIGH ?? 0);
 
@@ -34,7 +34,7 @@ export function StatCards() {
     },
     {
       title: "Replay Attempts",
-      value: data?.replay_total ?? 0,
+      value: data?.by_type.REPLAY_ATTACK ?? 0,
       icon: Shield,
       color: "text-cyan-500",
     },

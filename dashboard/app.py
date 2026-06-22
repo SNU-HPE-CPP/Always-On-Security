@@ -13,6 +13,7 @@ DATABASE = "/data/events.db"
 # Security Headers
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @app.after_request
 def set_security_headers(response):
     """Apply security headers to every response."""
@@ -26,15 +27,16 @@ def set_security_headers(response):
         "frame-ancestors 'none';"
     )
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"]        = "DENY"
-    response.headers["Referrer-Policy"]        = "strict-origin-when-cross-origin"
-    response.headers["Cache-Control"]          = "no-store"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Cache-Control"] = "no-store"
     return response
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DB helpers — parameterized queries only (no SQL injection)
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def get_db():
     conn = sqlite3.connect(DATABASE)
@@ -52,6 +54,7 @@ def _table_exists(conn, table: str) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 # Main dashboard page
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @app.route("/")
 def index():
@@ -107,15 +110,14 @@ def index():
 # API: Nodes
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @app.route("/api/nodes")
 def api_nodes():
     conn = get_db()
     try:
         if not _table_exists(conn, "node_status"):
             return jsonify([])
-        nodes = conn.execute(
-            "SELECT * FROM node_status ORDER BY node ASC"
-        ).fetchall()
+        nodes = conn.execute("SELECT * FROM node_status ORDER BY node ASC").fetchall()
         return jsonify([dict(r) for r in nodes])
     finally:
         conn.close()
@@ -128,9 +130,7 @@ def api_node_identity():
     try:
         if not _table_exists(conn, "node_identity"):
             return jsonify([])
-        rows = conn.execute(
-            "SELECT * FROM node_identity ORDER BY node ASC"
-        ).fetchall()
+        rows = conn.execute("SELECT * FROM node_identity ORDER BY node ASC").fetchall()
         return jsonify([dict(r) for r in rows])
     finally:
         conn.close()
@@ -186,67 +186,85 @@ def api_node_security():
 # ─────────────────────────────────────────────────────────────────────────────
 # API: Security Alerts
 # ─────────────────────────────────────────────────────────────────────────────
-
 @app.route("/api/alerts")
 def api_alerts():
     """
     Paginated security alerts.
-    Query params: limit (int), severity (str), node_id (str), threat_type (str)
-    All user inputs are passed as SQL parameters — no interpolation.
+
+    Query params:
+      - limit
+      - severity
+      - node_id
+      - threat_type
     """
-    # Validate and sanitise query params
+
     try:
         limit = min(int(request.args.get("limit", 50)), 200)
     except (ValueError, TypeError):
         limit = 50
 
-    severity    = request.args.get("severity", "").strip() or None
-    node_id     = request.args.get("node_id", "").strip() or None
+    severity = request.args.get("severity", "").strip() or None
+    node_id = request.args.get("node_id", "").strip() or None
     threat_type = request.args.get("threat_type", "").strip() or None
 
-    # Allowlist severity values to prevent unexpected filter bypass
     allowed_severities = {"INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"}
-    if severity and severity.upper() not in allowed_severities:
-        severity = None
-    else:
-        severity = severity.upper() if severity else None
+
+    if severity:
+        severity = severity.upper()
+
+        if severity not in allowed_severities:
+            severity = None
 
     conn = get_db()
+
     try:
         if not _table_exists(conn, "security_alerts"):
             return jsonify([])
 
         conditions = []
-        params     = []
+        params = []
+
         if severity:
             conditions.append("severity = ?")
             params.append(severity)
-        if node_id:
-            conditions.append("node_id = ?")
-            params.append(node_id)
-        if threat_type:
-            conditions.append("threat_type = ?")
-            params.append(threat_type)
 
-        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        if node_id:
+            conditions.append("LOWER(node_id) LIKE LOWER(?)")
+            params.append(f"%{node_id}%")
+
+        if threat_type:
+            conditions.append("LOWER(threat_type) LIKE LOWER(?)")
+            params.append(f"%{threat_type}%")
+
+        where = "WHERE " + " AND ".join(conditions) if conditions else ""
+
         params.append(limit)
 
         rows = conn.execute(
-            f"SELECT * FROM security_alerts {where} ORDER BY timestamp DESC LIMIT ?",
+            f"""
+            SELECT *
+            FROM security_alerts
+            {where}
+            ORDER BY timestamp DESC
+            LIMIT ?
+            """,
             params,
         ).fetchall()
 
         result = []
+
         for r in rows:
             row = dict(r)
-            # Parse evidence JSON safely
+
             try:
                 row["evidence"] = json.loads(row.get("evidence", "{}"))
             except (json.JSONDecodeError, TypeError):
                 row["evidence"] = {}
+
             result.append(row)
 
         return jsonify(result)
+
     finally:
         conn.close()
 
@@ -257,10 +275,9 @@ def api_alert_stats():
     conn = get_db()
     try:
         if not _table_exists(conn, "security_alerts"):
-            return jsonify({
-                "total": 0, "by_type": {}, "by_severity": {},
-                "recent_24h": 0
-            })
+            return jsonify(
+                {"total": 0, "by_type": {}, "by_severity": {}, "recent_24h": 0}
+            )
 
         rows = conn.execute("""
             SELECT threat_type, severity, COUNT(*) as count
@@ -268,18 +285,18 @@ def api_alert_stats():
             GROUP BY threat_type, severity
         """).fetchall()
 
-        by_type     = {}
+        by_type = {}
         by_severity = {}
         for row in rows:
-            tt  = row["threat_type"]
+            tt = row["threat_type"]
             sev = row["severity"]
             cnt = row["count"]
-            by_type[tt]      = by_type.get(tt, 0) + cnt
+            by_type[tt] = by_type.get(tt, 0) + cnt
             by_severity[sev] = by_severity.get(sev, 0) + cnt
 
-        total = conn.execute(
-            "SELECT COUNT(*) as c FROM security_alerts"
-        ).fetchone()["c"]
+        total = conn.execute("SELECT COUNT(*) as c FROM security_alerts").fetchone()[
+            "c"
+        ]
 
         recent_24h = conn.execute("""
             SELECT COUNT(*) as c FROM security_alerts
@@ -292,19 +309,23 @@ def api_alert_stats():
                 "SELECT COUNT(*) as c FROM replay_log"
             ).fetchone()["c"]
 
-        return jsonify({
-            "total":        total,
-            "by_type":      by_type,
-            "by_severity":  by_severity,
-            "recent_24h":   recent_24h,
-            "replay_total": replay_total,
-        })
+        return jsonify(
+            {
+                "total": total,
+                "by_type": by_type,
+                "by_severity": by_severity,
+                "recent_24h": recent_24h,
+                "replay_total": replay_total,
+            }
+        )
     finally:
         conn.close()
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Command API (ZMQ Client)
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def _send_cmd(payload):
     ctx = zmq.Context.instance()
@@ -320,25 +341,29 @@ def _send_cmd(payload):
     finally:
         sock.close()
 
+
 @app.route("/api/nodes/<node>/approve", methods=["POST"])
 def approve_node(node):
-    if not re.match(r'^[a-zA-Z0-9_-]{1,32}$', node):
+    if not re.match(r"^[a-zA-Z0-9_-]{1,32}$", node):
         return jsonify({"ok": False, "error": "Invalid node name"}), 400
     return _send_cmd({"action": "approve", "node": node})
 
+
 @app.route("/api/nodes/<node>/restart", methods=["POST"])
 def restart_node(node):
-    if not re.match(r'^[a-zA-Z0-9_-]{1,32}$', node):
+    if not re.match(r"^[a-zA-Z0-9_-]{1,32}$", node):
         return jsonify({"ok": False, "error": "Invalid node name"}), 400
     return _send_cmd({"action": "restart", "node": node})
+
 
 @app.route("/api/reset", methods=["POST"])
 def reset_system():
     return _send_cmd({"action": "reset"})
 
+
 @app.route("/api/nodes/<node>/details", methods=["GET"])
 def get_node_details(node):
-    if not re.match(r'^[a-zA-Z0-9_-]{1,32}$', node):
+    if not re.match(r"^[a-zA-Z0-9_-]{1,32}$", node):
         return jsonify({"error": "Invalid node name"}), 400
 
     conn = get_db()
@@ -346,24 +371,31 @@ def get_node_details(node):
         if not _table_exists(conn, "events"):
             return jsonify([])
 
-        rows = conn.execute("""
+        rows = conn.execute(
+            """
             SELECT timestamp, reasons, risk_score, weighted_score, bucket, matched_rules
             FROM events
             WHERE node = ?
               AND bucket IN ('human', 'auto', 'quarantine')
             ORDER BY id DESC LIMIT 15
-        """, (node,)).fetchall()
+        """,
+            (node,),
+        ).fetchall()
 
         events = []
         for r in rows:
-            events.append({
-                "timestamp": r["timestamp"],
-                "reasons": json.loads(r["reasons"]) if r["reasons"] else [],
-                "risk_score": r["risk_score"],
-                "weighted_score": r["weighted_score"],
-                "bucket": r["bucket"],
-                "matched_rules": json.loads(r["matched_rules"]) if r["matched_rules"] else []
-            })
+            events.append(
+                {
+                    "timestamp": r["timestamp"],
+                    "reasons": json.loads(r["reasons"]) if r["reasons"] else [],
+                    "risk_score": r["risk_score"],
+                    "weighted_score": r["weighted_score"],
+                    "bucket": r["bucket"],
+                    "matched_rules": (
+                        json.loads(r["matched_rules"]) if r["matched_rules"] else []
+                    ),
+                }
+            )
         return jsonify(events)
     finally:
         conn.close()
@@ -372,4 +404,6 @@ def get_node_details(node):
 if __name__ == "__main__":
     # TODO(security): In production, run behind a TLS-terminating reverse proxy.
     # Do NOT expose 0.0.0.0 externally without network-level access control.
-    app.run(host="0.0.0.0", port=5000)  # nosemgrep: python.flask.security.audit.app-run-param-config.avoid_app_run_with_bad_host — intentional: container bound to internal Docker network only
+    app.run(
+        host="0.0.0.0", port=5000
+    )  # nosemgrep: python.flask.security.audit.app-run-param-config.avoid_app_run_with_bad_host — intentional: container bound to internal Docker network only

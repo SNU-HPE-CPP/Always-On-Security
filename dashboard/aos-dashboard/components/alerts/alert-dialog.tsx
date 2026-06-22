@@ -18,12 +18,22 @@ export function AlertDialog({ open, onOpenChange, alert }: AlertDialogProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl border-zinc-800 bg-zinc-950 text-white">
+      <DialogContent
+        className="
+          max-w-6xl
+          w-[90vw]
+          border-zinc-800
+          bg-zinc-950
+          text-white
+          max-h-[90vh]
+          overflow-hidden
+        "
+      >
         <DialogHeader>
           <DialogTitle className="text-xl">{alert.threat_type}</DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-6">
+        <div className="space-y-6 overflow-y-auto pr-2">
           <div className="grid gap-4 md:grid-cols-2">
             <div>
               <p className="text-xs uppercase tracking-wide text-zinc-500">
@@ -65,7 +75,7 @@ export function AlertDialog({ open, onOpenChange, alert }: AlertDialogProps) {
 
             <pre
               className="
-                max-h-[350px]
+                max-h-[400px]
                 overflow-auto
                 rounded-lg
                 border
@@ -74,6 +84,8 @@ export function AlertDialog({ open, onOpenChange, alert }: AlertDialogProps) {
                 p-4
                 text-xs
                 text-green-400
+                whitespace-pre-wrap
+                break-words
               "
             >
               {JSON.stringify(alert.evidence, null, 2)}
