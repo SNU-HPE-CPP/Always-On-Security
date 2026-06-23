@@ -254,17 +254,54 @@ All infrastructure services that previously mounted `/var/run/docker.sock` direc
 | `PRIV_ESC_ATTEMPT`           | Security Monitor | 70       | 50           | Falco privilege escalation rule         |
 | `CONTAINER_ESCAPE_ATTEMPT`   | Security Monitor | 90       | 70           | Falco container escape rule             |
 
-### Enforcement Actions
+### Auto-Remediation Tracks (Playbooks)
 
-| Playbook | Threat | Mechanism |
-| :--- | :--- | :--- |
-| **Kill Unauthorized Process** | `RUNTIME_DRIFT` | `kill -9` rogue PIDs |
-| **Isolate Rogue Network** | `UNEXPECTED_NETWORK_ATTACH` | Targets rogue IP blocks via `iptables` |
-| **Restore Configuration** | `CONFIG_DRIFT` | Reverts to `/etc/config.bak` |
-| **Revoke SSH Keys** | `LATERAL_MOVEMENT` | Rotates credentials and kills `sshd` |
-| **Verify Container Digest** | `IMAGE_MISMATCH` | Re-pulls signed manifest and restarts |
+The system automatically triggers bash-based remediation scripts when a node's cumulative risk score enters the **Medium** (`auto`) bucket (score 41–70) or when specifically mandated by a correlated threat profile. These playbooks are executed by the Risk Engine strictly in the Infrastructure Zone.
 
-No enforcement action executes code, modifies files, or kills processes inside a tenant container.
+**Crucial Security Invariant:** No auto-remediation playbook ever executes arbitrary code, modifies internal tenant data files, or kills processes *inside* a tenant workload container. All enforcement is executed at the outer host abstraction layer.
+
+### 1. Kill Unauthorized Process (`RUNTIME_DRIFT`)
+* **Purpose:** To neutralize unauthorized processes that bypass normal container startup (e.g., processes spawned via unexpected `exec` sessions).
+* **Trigger:** The `host-observer` detects new rogue processes or newly added capabilities diverging from the `runtime_baseline.yaml`.
+* **Action Details:** 
+  1. The playbook executes `ps aux` strictly on the host.
+  2. It filters the process tree to isolate the exact Process IDs (PIDs) associated with the rogue activity originating from the compromised container.
+  3. It issues a forceful `kill -9 <PID>` to terminate the unauthorized process tree directly from the host namespace.
+* **Impact:** The rogue process is instantly killed without needing an agent inside the container, neutralizing the immediate threat.
+
+### 2. Isolate Rogue Network Segment (`UNEXPECTED_NETWORK_ATTACH`)
+* **Purpose:** To prevent lateral movement and unauthorized exfiltration when a container attempts to join a network it doesn't belong to.
+* **Trigger:** The `security-monitor` detects a workload container maliciously attaching to an unauthorized subnet (e.g., a storage network instead of the compute network).
+* **Action Details:**
+  1. The playbook dynamically targets the rogue IP blocks (e.g., `10.99.0.0/16`).
+  2. It leverages the host's `iptables` to append `DROP` rules for both `INPUT` and `OUTPUT` traffic matching the rogue subnet.
+* **Impact:** The container's access to the unauthorized segment is physically severed at the host networking level. Legitimate traffic on the management cluster net remains unaffected.
+
+### 3. Restore Configuration Baseline (`CONFIG_DRIFT`)
+* **Purpose:** To self-heal the security infrastructure if an attacker attempts to tamper with critical system configuration files.
+* **Trigger:** The `host-observer`'s integrity checks detect that the SHA-256 hashes of infrastructure configuration files drifted from the `config_hashes.yaml` baseline.
+* **Action Details:**
+  1. The playbook is triggered to run on the Infrastructure node.
+  2. It locates the secure, read-only backup directory (`/etc/config.bak`).
+  3. It executes a clean copy (`cp /etc/config.bak /etc/config`) to overwrite the tampered configuration files.
+* **Impact:** Any attacker modification to security rules or scoring weights is instantly reverted.
+
+### 4. Revoke SSH Keys & Reset (`LATERAL_MOVEMENT`)
+* **Purpose:** To instantly block attackers who are attempting to spread laterally across nodes using compromised SSH credentials.
+* **Trigger:** The `security-monitor` (via Suricata or Zeek) flags anomalous SSH login attempts, or the `host-observer` detects rogue key additions.
+* **Action Details:**
+  1. The playbook executes `pkill -9 sshd` to forcefully evict any active, unauthorized SSH sessions on the target node.
+  2. It triggers a rotation script to regenerate ephemeral SSH keys.
+* **Impact:** The lateral traversal pathway is immediately cut off. The attacker loses their session and cannot reconnect using the stolen credentials.
+
+### 5. Verify Container Digest & Restart (`IMAGE_MISMATCH`)
+* **Purpose:** To ensure that the running container image perfectly matches the cryptographically signed and approved baseline.
+* **Trigger:** The `host-observer` detects that the running container's image digest no longer matches the expected SHA-256 digest in `approved_images.yaml`.
+* **Action Details:**
+  1. The playbook signals the container runtime to stop the tampered container.
+  2. It reaches out to the trusted local container registry to re-pull the verified and approved image manifest.
+  3. It restarts the application service, thereby spawning a fresh, pristine container from the verified image.
+* **Impact:** The compromised container instance is destroyed and replaced with a clean instance, wiping out any filesystem tampering that occurred outside of persistent volumes.
 
 ### Risk Scoring Buckets
 
