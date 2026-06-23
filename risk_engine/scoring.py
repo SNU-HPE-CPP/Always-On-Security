@@ -12,11 +12,11 @@ class WeightedScorer:
         self.decay_rate = decay_rate
 
     @classmethod
-    def from_yaml(cls, thresholds_path: str, criticality_path: str) -> "WeightedScorer":
-        with open(thresholds_path) as f:
-            cfg = yaml.safe_load(f)
-        with open(criticality_path) as f:
-            crit_raw = yaml.safe_load(f) or {}
+    def from_yaml(cls, config_path: str) -> "WeightedScorer":
+        with open(config_path) as f:
+            cfg = yaml.safe_load(f) or {}
+            
+        crit_raw = cfg.get("node_criticality", {})
         default = int(crit_raw.pop("default", 15))
         crit = {k: int(v) for k, v in crit_raw.items()}
         decay_rate = float(cfg.get("decay_rate", 5.0))
@@ -34,7 +34,11 @@ class WeightedScorer:
     ) -> tuple[float, float, str]:
         if not matches:
             # Risk decay for idle nodes
-            new_cumulative = max(0.0, current_score - self.decay_rate)
+            # Do not decay if the node is already pending human review or quarantine
+            if current_score >= 71.0:
+                new_cumulative = current_score
+            else:
+                new_cumulative = max(0.0, current_score - self.decay_rate)
             bucket = self._bucket(new_cumulative)
             return 0.0, round(new_cumulative, 4), bucket
 
@@ -64,4 +68,4 @@ class WeightedScorer:
         for name, bounds in self.buckets.items():
             if score <= bounds[1]:
                 return name
-        return "quarantine"  # score > 100
+        return "critical"  # score > 100

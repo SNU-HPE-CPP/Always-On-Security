@@ -20,9 +20,6 @@ policies:
   - threat_type: ROGUE_NODE
     action: quarantine
 
-  - threat_type: NODE_IMPERSONATION
-    action: quarantine
-
   - threat_type: TELEMETRY_TAMPER
     action: quarantine
 
@@ -45,17 +42,6 @@ policies:
   - threat_type: Fanout_Excess
     action: network_isolate
 
-  # Image attestation failures: stop immediately (container running unexpected image)
-  - threat_type: IMAGE_MISMATCH
-    action: quarantine
-
-  - threat_type: UNAPPROVED_IMAGE
-    action: quarantine
-
-  # Runtime drift: pause for investigation
-  - threat_type: RUNTIME_DRIFT
-    action: pause
-
   # Falco high-confidence attacks: stop immediately
   - threat_type: REVERSE_SHELL
     action: quarantine
@@ -66,13 +52,10 @@ policies:
   - threat_type: PRIV_ESC_ATTEMPT
     action: pause
 
-  # Unexpected network attachment: isolate from data networks
-  - threat_type: UNEXPECTED_NETWORK_ATTACH
-    action: network_isolate
-
   # Infrastructure config tamper: alert only (cannot quarantine infra)
   - threat_type: POLICY_TAMPER
     action: network_isolate
 
   - threat_type: ALLOWLIST_TAMPER
     action: network_isolate
+

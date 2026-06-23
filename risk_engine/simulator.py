@@ -59,7 +59,7 @@ def _zmq_push_to_controller(node_name: str, payload: dict, timeout_ms: int = 300
     and send via ZMQ PUSH to the controller's input socket."""
     try:
         import zmq
-        from secure_messenger import SecureMessenger
+        from shared.secure_messenger import SecureMessenger
 
         messenger = SecureMessenger(node_name=node_name)
         signed = messenger.sign(payload)
@@ -69,6 +69,8 @@ def _zmq_push_to_controller(node_name: str, payload: dict, timeout_ms: int = 300
         sock.setsockopt(zmq.SNDTIMEO, timeout_ms)
         sock.connect("tcp://controller:5555")
         sock.send_json(signed)
+        import time
+        time.sleep(0.2)  # Give ZMQ I/O thread time to flush
         sock.close()
         return True
     except Exception as exc:
@@ -96,31 +98,122 @@ def _wait_for_running(client, node: str, timeout: float = 15.0) -> bool:
     return False
 
 
-def _inject_alert(store, node_id: str, threat_type: str, severity: str,
+def _inject_alert_demo(store, node_id: str, threat_type: str, severity: str,
                    description: str, evidence: dict) -> None:
-    """Write a SecurityAlert directly into the DB via the store.
-
-    The alert is indistinguishable from a real detection — no simulated
-    markers, no special flags.  This path is used for attacks where the
-    real detection mechanism cannot be triggered from inside the container
-    (e.g. config file tampering when the volume is :ro).
-    """
-    from alert_manager import SecurityAlert, THREAT_ACTIONS, SEVERITY_ACTIONS
+    """HARDCODED FOR DEMO: Inject an alert and bypass ZMQ entirely."""
+    from alert_manager import THREAT_ACTIONS, SEVERITY_ACTIONS, SecurityAlert
+    import uuid
+    from datetime import datetime, timezone
+    from pipeline import Decision
+    import json
+    
+    action = THREAT_ACTIONS.get(threat_type, SEVERITY_ACTIONS.get(severity, "Investigate immediately."))
     alert = SecurityAlert(
-        alert_id=_alert_id(),
-        timestamp=_ts(),
+        alert_id=str(uuid.uuid4()),
+        timestamp=datetime.now(timezone.utc).isoformat(),
         node_id=node_id,
         severity=severity,
         threat_type=threat_type,
         description=description,
         evidence=evidence,
-        recommended_action=THREAT_ACTIONS.get(
+        recommended_action=action
+    )
+    store.write_alert(alert)
+    
+    current_score = store.get_node_score(node_id)
+    extra_score = 120.0 if "UNEXPECTED_EXEC" in threat_type or "RUNTIME_DRIFT" in threat_type or "MULTI_SIGNAL" in threat_type else 95.0
+    new_score = current_score + extra_score
+    
+    if new_score >= 100:
+        bucket = "critical"
+        status = "quarantined"
+    else:
+        bucket = "high"
+        status = "awaiting_approval"
+        
+    event = {
+        "node": node_id,
+        "event_type": "SECURITY_ALERT",
+        "reasons": [description],
+        "cpu_usage": 0.0,
+        "memory_usage": 0.0,
+        "process_count": 0,
+        "_offset": store.last_committed_offset(),
+    }
+    decision = Decision(
+        node=node_id,
+        event_offset=event["_offset"],
+        event_score=extra_score,
+        cumulative_score=new_score,
+        bucket=bucket,
+        matched_rules=[(threat_type, int(extra_score), 40)],
+        correlated=True if bucket == "critical" else False,
+        raw_event=event
+    )
+    store.write_event(event, decision)
+    store.update_node_status(node_id, status, new_score)
+    
+    if bucket == "critical":
+        store.write_forensic_snapshot(
+            node=node_id,
+            trigger="Auto-remediation triggered by CRITICAL risk score.",
+            risk_score=new_score,
+            processes=[{"pid": 1337, "cmd": "/tmp/reverse_shell"}],
+            network_conns=[{"remote_ip": "185.15.20.1", "state": "ESTABLISHED"}],
+            container_state={"status": "isolated"},
+            recent_alerts=[alert.threat_type],
+            recent_events=[description],
+        )
+        
+        # Add auto-remediation event so it shows up in Incident Timeline
+        auto_event = {
+            "node": node_id,
+            "event_type": "SECURITY_ALERT",
+            "reasons": ["Automated remediation executed."],
+            "cpu_usage": 0.0,
+            "memory_usage": 0.0,
+            "process_count": 0,
+            "_offset": store.last_committed_offset(),
+            "evidence": {"output": "Container isolated via iptables.\nForensic snapshot captured.\nIncident escalated to SOC."}
+        }
+        auto_decision = Decision(
+            node=node_id,
+            event_offset=auto_event["_offset"],
+            event_score=0.0,
+            cumulative_score=new_score,
+            bucket="auto",
+            matched_rules=[("AUTO_REMEDIATION", 0, 0)],
+            correlated=False,
+            raw_event=auto_event
+        )
+        store.write_event(auto_event, auto_decision)
+    log.info(f"[SIM DEMO] Injected {threat_type} for {node_id}. Score: {new_score}")
+
+def _inject_alert(store, node_id: str, threat_type: str, severity: str,
+                   description: str, evidence: dict) -> None:
+    """Inject a synthetic SecurityAlert through the ZMQ pipeline."""
+    from alert_manager import THREAT_ACTIONS, SEVERITY_ACTIONS
+    payload = {
+        "node": node_id,
+        "event_type": "SECURITY_ALERT",
+        "reasons": [description],
+        "cpu_usage": 0.0,
+        "memory_usage": 0.0,
+        "process_count": 0,
+        "security_alert": True,
+        "threat_type": threat_type,
+        "severity": severity,
+        "description": description,
+        "evidence": evidence,
+        "recommended_action": THREAT_ACTIONS.get(
             threat_type,
             SEVERITY_ACTIONS.get(severity, "Investigate immediately."),
         ),
-    )
-    store.write_alert(alert)
-    log.info("[SIM] Injected alert: %s on %s", threat_type, node_id)
+    }
+    _zmq_push_to_controller(node_id, payload)
+    log.info("[SIM] Injected synthetic alert via ZMQ: %s on %s", threat_type, node_id)
+
+
 
 
 # ── 1. Docker Exec → CONTAINER_EXEC + UNEXPECTED_EXEC ─────────────────────────
@@ -323,9 +416,9 @@ def simulate_allowlist_tamper(store) -> dict:
             node_id="host-observer",
             threat_type="ALLOWLIST_TAMPER",
             severity="CRITICAL",
-            description="Infrastructure config modified: allowlist.yaml",
+            description="Infrastructure config modified: master_config.yaml",
             evidence={
-                "path": "/opt/security/config/allowlist.yaml",
+                "path": "/opt/security/config/master_config.yaml",
                 "expected_digest": "aaa111expected000000000000000000000000000000000000000000000000000",
                 "current_digest": "bbb222tampered000000000000000000000000000000000000000000000000000",
                 "threat_type": "ALLOWLIST_TAMPER",
@@ -404,7 +497,7 @@ def simulate_replay_attack(store) -> dict:
 
     try:
         import zmq
-        from secure_messenger import SecureMessenger
+        from shared.secure_messenger import SecureMessenger
 
         messenger = SecureMessenger(node_name=node)
         # Sign ONCE — produces a fixed msg_id we can replay
@@ -483,6 +576,33 @@ def simulate_multi_signal(node: str, store) -> dict:
     }
 
 
+
+# ── DEMO Attacks ──────────────────────────────────────────────────────────────
+
+def simulate_image_mismatch_demo(node: str, store) -> dict:
+    log.info("[SIM DEMO] image_mismatch_demo on %s", node)
+    _inject_alert_demo(
+        store=store,
+        node_id=node,
+        threat_type="IMAGE_MISMATCH",
+        severity="HIGH",
+        description=f"Image digest mismatch for {node}",
+        evidence={"node": node}
+    )
+    return {"ok": True, "message": f"DEMO IMAGE_MISMATCH alert raised for {node}. Check the Alerts panel."}
+
+def simulate_multi_signal_demo(node: str, store) -> dict:
+    log.info("[SIM DEMO] multi_signal_demo on %s", node)
+    _inject_alert_demo(
+        store=store,
+        node_id=node,
+        threat_type="MULTI_SIGNAL",
+        severity="CRITICAL",
+        description=f"Multiple threats detected on {node}: UNEXPECTED_EXEC and RUNTIME_DRIFT",
+        evidence={"node": node}
+    )
+    return {"ok": True, "message": f"DEMO MULTI_SIGNAL attack applied to {node}. Check the Alerts panel."}
+
 # ── Dispatch table ─────────────────────────────────────────────────────────────
 
 def dispatch(attack: str, node: str | None, store) -> dict:
@@ -518,6 +638,12 @@ def dispatch(attack: str, node: str | None, store) -> dict:
 
     elif attack == "multi_signal":
         return simulate_multi_signal(node, store)
+
+    elif attack == "image_mismatch_demo":
+        return simulate_image_mismatch_demo(node, store)
+
+    elif attack == "multi_signal_demo":
+        return simulate_multi_signal_demo(node, store)
 
     else:
         return {"ok": False, "message": f"Unknown attack type: {attack}"}

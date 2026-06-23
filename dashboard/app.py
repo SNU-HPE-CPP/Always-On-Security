@@ -3,6 +3,12 @@ import sqlite3
 import json
 import zmq
 import re
+import sys
+import os
+
+# Make incident_summary importable from the same directory
+sys.path.insert(0, os.path.dirname(__file__))
+from incident_summary import build_incident_summary
 
 app = Flask(__name__)
 
@@ -269,6 +275,34 @@ def api_alerts():
         conn.close()
 
 
+@app.route("/api/events")
+def api_events():
+    """Live telemetry events feed."""
+    conn = get_db()
+    try:
+        if not _table_exists(conn, "events"):
+            return jsonify([])
+        rows = conn.execute(
+            "SELECT * FROM events ORDER BY id DESC LIMIT 20"
+        ).fetchall()
+        
+        result = []
+        for r in rows:
+            row = dict(r)
+            try:
+                row["reasons"] = json.loads(row.get("reasons", "[]"))
+            except:
+                row["reasons"] = []
+            try:
+                row["matched_rules"] = json.loads(row.get("matched_rules", "[]"))
+            except:
+                row["matched_rules"] = []
+            result.append(row)
+        return jsonify(result)
+    finally:
+        conn.close()
+
+
 @app.route("/api/alerts/stats")
 def api_alert_stats():
     """Aggregate threat statistics for dashboard charts."""
@@ -330,7 +364,7 @@ def api_alert_stats():
 def _send_cmd(payload):
     ctx = zmq.Context.instance()
     sock = ctx.socket(zmq.REQ)
-    sock.setsockopt(zmq.RCVTIMEO, 5000)  # 5s timeout
+    sock.setsockopt(zmq.RCVTIMEO, 90000)  # 90s timeout
     try:
         sock.connect("tcp://risk-engine:5557")
         sock.send_json(payload)
@@ -371,7 +405,9 @@ _VALID_ATTACKS = {
     "runtime_drift_network",
     "suspicious_restart",
     "image_mismatch",
+    "image_mismatch_demo",
     "multi_signal",
+    "multi_signal_demo",
     # global
     "config_tamper",
     "allowlist_tamper",
@@ -384,7 +420,9 @@ _NODE_SPECIFIC_ATTACKS = {
     "runtime_drift_network",
     "suspicious_restart",
     "image_mismatch",
+    "image_mismatch_demo",
     "multi_signal",
+    "multi_signal_demo",
 }
 
 
@@ -423,10 +461,9 @@ def get_node_details(node):
 
         rows = conn.execute(
             """
-            SELECT timestamp, reasons, risk_score, weighted_score, bucket, matched_rules
+            SELECT timestamp, reasons, risk_score, weighted_score, bucket, matched_rules, evidence
             FROM events
             WHERE node = ?
-              AND bucket IN ('human', 'auto', 'quarantine')
             ORDER BY id DESC LIMIT 15
         """,
             (node,),
@@ -444,9 +481,152 @@ def get_node_details(node):
                     "matched_rules": (
                         json.loads(r["matched_rules"]) if r["matched_rules"] else []
                     ),
+                    "evidence": (
+                        json.loads(r["evidence"]) if r["evidence"] else {}
+                    ),
                 }
             )
         return jsonify(events)
+    finally:
+        conn.close()
+
+
+@app.route("/api/nodes/<node>/deny", methods=["POST"])
+def deny_node(node):
+    """
+    Admin-initiated quarantine from the Human Review panel.
+    Option B: stop container + run forensic capture with admin notes attached.
+    Sends a 'deny' action to the risk engine cmd_server over ZMQ.
+    """
+    if not re.match(r"^[a-zA-Z0-9_-]{1,32}$", node):
+        return jsonify({"ok": False, "error": "Invalid node name"}), 400
+    body  = request.get_json(silent=True) or {}
+    notes = body.get("notes", "").strip()[:500]  # cap to 500 chars
+    return _send_cmd({"action": "deny", "node": node, "notes": notes})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# API: Human Review Queue
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@app.route("/api/review/queue")
+def api_review_queue():
+    """
+    Return all nodes currently in 'awaiting_approval' status
+    with lightweight incident context for the Review Queue page.
+    """
+    conn = get_db()
+    try:
+        if not _table_exists(conn, "node_status"):
+            return jsonify([])
+
+        nodes = conn.execute("""
+            SELECT * FROM node_status
+            WHERE status = 'awaiting_approval'
+            ORDER BY last_updated ASC
+        """).fetchall()
+
+        result = []
+        for row in nodes:
+            node = row["node"]
+            risk_score = row["risk_score"]
+
+            # Grab recent alert counts
+            alert_count = 0
+            top_threat  = None
+            if _table_exists(conn, "security_alerts"):
+                arow = conn.execute("""
+                    SELECT COUNT(*) as cnt,
+                           threat_type
+                    FROM security_alerts
+                    WHERE node_id = ?
+                    ORDER BY timestamp DESC
+                    LIMIT 1
+                """, (node,)).fetchone()
+                if arow:
+                    top_threat = arow["threat_type"]
+                cnt_row = conn.execute(
+                    "SELECT COUNT(*) as c FROM security_alerts WHERE node_id=?", (node,)
+                ).fetchone()
+                alert_count = cnt_row["c"] if cnt_row else 0
+
+            result.append({
+                "node":         node,
+                "risk_score":   risk_score,
+                "status":       row["status"],
+                "last_updated": row["last_updated"],
+                "isolated_ip":  row["isolated_ip"],
+                "alert_count":  alert_count,
+                "top_threat":   top_threat,
+            })
+
+        return jsonify(result)
+    finally:
+        conn.close()
+
+
+@app.route("/api/incident-summary/<node>")
+def api_incident_summary(node):
+    """
+    Return a full, structured incident summary for the Human Review panel.
+    Generated by incident_summary.py (LLM-free, pure Python template logic).
+    """
+    if not re.match(r"^[a-zA-Z0-9_-]{1,32}$", node):
+        return jsonify({"error": "Invalid node name"}), 400
+
+    conn = get_db()
+    try:
+        # 1. Node status
+        if not _table_exists(conn, "node_status"):
+            return jsonify({"error": "No data yet"}), 404
+        ns_row = conn.execute(
+            "SELECT * FROM node_status WHERE node=?", (node,)
+        ).fetchone()
+        if not ns_row:
+            return jsonify({"error": "Node not found"}), 404
+        node_status = dict(ns_row)
+
+        # 2. Recent scored events
+        events = []
+        if _table_exists(conn, "events"):
+            rows = conn.execute("""
+                SELECT timestamp, event_type, risk_score, bucket,
+                       reasons, matched_rules, correlated, weighted_score
+                FROM events WHERE node=?
+                ORDER BY id DESC LIMIT 40
+            """, (node,)).fetchall()
+            events = [dict(r) for r in rows]
+
+        # 3. Security alerts
+        alerts = []
+        if _table_exists(conn, "security_alerts"):
+            rows = conn.execute("""
+                SELECT timestamp, threat_type, severity, description, evidence
+                FROM security_alerts WHERE node_id=?
+                ORDER BY timestamp DESC LIMIT 50
+            """, (node,)).fetchall()
+            alerts = [dict(r) for r in rows]
+
+        # 4. Latest forensic snapshot
+        forensic = None
+        if _table_exists(conn, "forensic_snapshots"):
+            frow = conn.execute("""
+                SELECT * FROM forensic_snapshots
+                WHERE node=?
+                ORDER BY captured_at DESC LIMIT 1
+            """, (node,)).fetchone()
+            if frow:
+                forensic = dict(frow)
+
+        summary = build_incident_summary(
+            node=node,
+            node_status=node_status,
+            events=events,
+            alerts=alerts,
+            forensic=forensic,
+        )
+        return jsonify(summary)
     finally:
         conn.close()
 

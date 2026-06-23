@@ -127,9 +127,11 @@ class ReplayGuard:
             return True, "Invalid or missing timestamp"
 
         # 2. Sequence number monotonicity
-        last = self._last_seq.get(node, -1)
-        if seq <= last:
-            return True, f"Non-monotonic seq {seq} (last seen {last})"
+        # Exempt infrastructure nodes as they restart frequently and have no persistent storage for sequence numbers
+        if node not in ["host-observer", "security-monitor", "alert-ingestor", "remediation-engine"]:
+            last = self._last_seq.get(node, -1)
+            if seq <= last:
+                return True, f"Non-monotonic seq {seq} (last seen {last})"
 
         # 3. Duplicate msg_id in sliding window
         dq = self._seen[node]

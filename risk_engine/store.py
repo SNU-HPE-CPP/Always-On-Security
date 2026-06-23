@@ -52,6 +52,7 @@ class Store:
             ("sha256",                        "TEXT"),
             ("file_size",                     "INTEGER"),
             ("permissions",                   "TEXT"),
+            ("evidence",                      "TEXT"),
         ]:
             try:
                 c.execute(f"ALTER TABLE events ADD COLUMN {col} {defn}")
@@ -86,6 +87,15 @@ class Store:
             c.execute("ALTER TABLE node_status ADD COLUMN isolated_ip TEXT DEFAULT NULL")
         except sqlite3.OperationalError:
             pass
+        for col, defn in [
+            ("review_notes",  "TEXT DEFAULT NULL"),
+            ("reviewed_by",   "TEXT DEFAULT NULL"),
+            ("reviewed_at",   "TEXT DEFAULT NULL"),
+        ]:
+            try:
+                c.execute(f"ALTER TABLE node_status ADD COLUMN {col} {defn}")
+            except sqlite3.OperationalError:
+                pass
 
         c.execute("""
             INSERT OR IGNORE INTO engine_offset (id, last_committed)
@@ -195,6 +205,23 @@ class Store:
     def write_event(self, event: dict, decision) -> None:
         ts = event.get("_received_at", datetime.now(timezone.utc).isoformat())
         fim = event.get("fim_details") or {}
+        
+        cpu_usage = event.get("cpu_usage")
+        memory_usage = event.get("memory_usage")
+        process_count = event.get("process_count")
+        
+        # If metrics are missing or exactly 0 (which happens for synthetic threat events),
+        # fetch the last known real telemetry for this node.
+        if (cpu_usage is None or cpu_usage == 0.0) and (memory_usage is None or memory_usage == 0.0):
+            last_metrics = self.conn.execute(
+                "SELECT cpu_usage, memory_usage, process_count FROM events WHERE node = ? AND cpu_usage IS NOT NULL AND cpu_usage > 0.0 ORDER BY id DESC LIMIT 1",
+                (decision.node,)
+            ).fetchone()
+            if last_metrics:
+                cpu_usage = last_metrics["cpu_usage"]
+                memory_usage = last_metrics["memory_usage"]
+                process_count = last_metrics["process_count"]
+
         c = self.conn.cursor()
         c.execute("""
             INSERT INTO events (
@@ -202,14 +229,14 @@ class Store:
                 failed_login_count, privilege_escalation_attempts,
                 event_type, reasons, risk_score,
                 weighted_score, bucket, correlated, matched_rules,
-                file_path, fim_event_type, sha256, file_size, permissions
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                file_path, fim_event_type, sha256, file_size, permissions, evidence
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             ts,
             decision.node,
-            event.get("cpu_usage"),
-            event.get("memory_usage"),
-            event.get("process_count"),
+            cpu_usage,
+            memory_usage,
+            process_count,
             event.get("failed_login_count", 0),
             event.get("privilege_escalation_attempts", 0),
             event.get("event_type", "NORMAL"),
@@ -224,6 +251,7 @@ class Store:
             fim.get("current_state", {}).get("sha256") if fim.get("current_state") else None,
             fim.get("current_state", {}).get("file_size") if fim.get("current_state") else None,
             fim.get("current_state", {}).get("permissions") if fim.get("current_state") else None,
+            json.dumps(event.get("evidence", {})) if event.get("evidence") else None,
         ))
         c.execute("""
             INSERT INTO node_scores (node, cumulative_score, updated_at)
@@ -572,3 +600,31 @@ class Store:
                 ORDER BY captured_at DESC LIMIT ?
             """, (limit,)).fetchall()
         return [dict(r) for r in rows]
+
+    def get_node_event_history(self, node: str, limit: int = 40) -> list:
+        """Return recent scored events for a node, ordered oldest-first."""
+        rows = self.conn.execute("""
+            SELECT timestamp, event_type, risk_score, bucket,
+                   reasons, matched_rules, correlated, weighted_score
+            FROM events WHERE node = ?
+            ORDER BY id DESC LIMIT ?
+        """, (node, limit)).fetchall()
+        return [dict(r) for r in rows]
+
+    def write_review_decision(
+        self,
+        node: str,
+        decision: str,
+        notes: str = "",
+        reviewed_by: str = "admin",
+    ) -> None:
+        """Record human review outcome (approve/deny) on the node_status row."""
+        ts = datetime.now(timezone.utc).isoformat()
+        self.conn.execute("""
+            UPDATE node_status
+            SET review_notes  = ?,
+                reviewed_by   = ?,
+                reviewed_at   = ?
+            WHERE node = ?
+        """, (f"[{decision.upper()}] {notes}", reviewed_by, ts, node))
+        self.conn.commit()

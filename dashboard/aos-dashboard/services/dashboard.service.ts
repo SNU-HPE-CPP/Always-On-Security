@@ -15,3 +15,7 @@ export async function getRecentAlerts() {
   return data;
 }
 
+export async function getEvents() {
+  const { data } = await api.get("/events");
+  return data;
+}

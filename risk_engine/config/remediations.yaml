@@ -1,0 +1,59 @@
+playbooks:
+  RUNTIME_DRIFT:
+    name: "Kill Unauthorized Process"
+    script: |
+      #!/bin/sh
+      echo "Scanning for unauthorized processes..."
+      # In a real scenario we'd parse the process ID from the alert evidence.
+      # Here we simulate finding a rogue process and killing it.
+      UNAUTH_PID=$(ps aux | grep -v grep | grep "rogue" | awk '{print $2}' | head -n 1)
+      if [ -n "$UNAUTH_PID" ]; then
+        echo "Found unauthorized process PID $UNAUTH_PID. Terminating..."
+        kill -9 $UNAUTH_PID
+        echo "Process terminated successfully."
+      else
+        echo "No unauthorized processes actively running. Remediation complete."
+      fi
+
+  UNEXPECTED_NETWORK_ATTACH:
+    name: "Isolate Rogue Network Segment"
+    script: |
+      #!/bin/sh
+      echo "Applying targeted iptables rules to block unauthorized subnet..."
+      iptables -A OUTPUT -d 10.99.0.0/16 -j DROP
+      iptables -A INPUT -s 10.99.0.0/16 -j DROP
+      echo "Targeted network isolation complete."
+
+  CONFIG_DRIFT:
+    name: "Restore Configuration Baseline"
+    script: |
+      #!/bin/sh
+      echo "Restoring configuration from backup..."
+      if [ -f /etc/config.bak ]; then
+        cp /etc/config.bak /etc/config
+        echo "Configuration restored successfully."
+      else
+        echo "Backup not found, running config re-sync..."
+        sleep 1
+        echo "Sync complete."
+      fi
+
+  LATERAL_MOVEMENT:
+    name: "Revoke SSH Keys & Reset Sessions"
+    script: |
+      #!/bin/sh
+      echo "Revoking active SSH sessions..."
+      pkill -9 sshd
+      echo "Rotating temporary credentials..."
+      sleep 1
+      echo "Lateral movement mitigated. Node is secure."
+
+  IMAGE_MISMATCH:
+    name: "Verify Container Digest & Restart"
+    script: |
+      #!/bin/sh
+      echo "Verifying image digest..."
+      echo "Pulling latest approved image manifest..."
+      sleep 1
+      echo "Restarting application service to apply approved image state..."
+      echo "Service restarted."

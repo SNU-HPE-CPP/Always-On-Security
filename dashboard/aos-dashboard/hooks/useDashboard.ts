@@ -6,6 +6,7 @@ import {
   getNodes,
   getRecentAlerts,
   getStats,
+  getEvents,
 } from "@/services/dashboard.service";
 
 export function useStats() {
@@ -32,3 +33,10 @@ export function useAlerts() {
   });
 }
 
+export function useEvents() {
+  return useQuery({
+    queryKey: ["events"],
+    queryFn: getEvents,
+    refetchInterval: 5000,
+  });
+}

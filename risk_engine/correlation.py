@@ -40,6 +40,8 @@ MULTI_SIGNAL_RULES: list[tuple[frozenset, int, float, str]] = [
      600, 3.0, "Coordinated Intrusion"),
     (frozenset({"CONTAINER_ESCAPE_ATTEMPT", "PRIV_ESC_ATTEMPT"}),
      120, 3.0, "Container Escape Attempt"),
+    (frozenset({"UNEXPECTED_EXEC", "UNEXPECTED_NETWORK_ATTACH"}),
+     180, 2.5, "APT Lateral Movement"),
 ]
 
 

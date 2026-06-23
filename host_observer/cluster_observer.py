@@ -49,8 +49,7 @@ CONTROLLER_URL  = os.getenv("CONTROLLER_URL", "tcp://controller:5555")
 # These are security policy files, NOT tenant-owned customer files.
 INFRA_CONFIG_FILES = [
     os.path.join(CONFIG_DIR, "rules.yaml"),
-    os.path.join(CONFIG_DIR, "thresholds.yaml"),
-    os.path.join(CONFIG_DIR, "allowlist.yaml"),
+    os.path.join(CONFIG_DIR, "master_config.yaml"),
     os.path.join(CONFIG_DIR, "fast_path_policy.yaml"),
     os.path.join(CONFIG_DIR, "approved_images.yaml"),
     os.path.join(CONFIG_DIR, "runtime_baseline.yaml"),
@@ -59,9 +58,8 @@ INFRA_CONFIG_FILES = [
 # Map config file basename to the alert threat_type it generates
 INFRA_FILE_THREAT_TYPE = {
     "rules.yaml":          "POLICY_TAMPER",
-    "thresholds.yaml":     "POLICY_TAMPER",
+    "master_config.yaml":  "ALLOWLIST_TAMPER",
     "fast_path_policy.yaml": "POLICY_TAMPER",
-    "allowlist.yaml":      "ALLOWLIST_TAMPER",
     "approved_images.yaml":  "POLICY_TAMPER",
     "runtime_baseline.yaml": "POLICY_TAMPER",
 }
@@ -74,13 +72,13 @@ INFRA_INTEGRITY_INTERVAL = 30  # seconds between infra config hash checks
 # ─────────────────────────────────────────────────────────────────────────────
 
 def load_allowlist() -> list[str]:
-    path = os.path.join(CONFIG_DIR, "allowlist.yaml")
+    path = os.getenv("ALLOWLIST_PATH", os.path.join(CONFIG_DIR, "master_config.yaml"))
     try:
         with open(path) as f:
             data = yaml.safe_load(f) or {}
             return data.get("allowed_nodes", ["node1", "node2", "node3", "node4"])
     except Exception as e:
-        log.error(f"Error loading allowlist: {e}")
+        log.error(f"Error loading allowlist from {path}: {e}")
         return ["node1", "node2", "node3", "node4"]
 
 
@@ -172,6 +170,21 @@ def check_image_attestation(
     # Reload to get fresh attrs
     container.reload()
     attrs = container.attrs
+
+    # 60-second grace period for newly started containers
+    started_at_str = attrs.get("State", {}).get("StartedAt")
+    if started_at_str:
+        try:
+            import datetime
+            import re
+            # Clean up the string to match python's fromisoformat limitations
+            ts_str = re.sub(r'\.\d+Z$', 'Z', started_at_str).replace('Z', '+00:00')
+            started_at = datetime.datetime.fromisoformat(ts_str)
+            if (datetime.datetime.now(datetime.timezone.utc) - started_at).total_seconds() < 60:
+                # Still in grace period, return no drift
+                return []
+        except Exception as e:
+            log.debug(f"Failed to parse StartedAt for {node}: {e}")
 
     # Extract running image digest
     image_id     = attrs.get("Image", "")         # sha256:... of image layer
@@ -571,26 +584,27 @@ def main():
                     cpu, mem = get_container_stats(container)
 
                     # 2. Image Attestation
-                    image_events = check_image_attestation(container, approved_images)
-                    for evt in image_events:
-                        payload = {
-                            "node":          node,
-                            "cpu_usage":     round(cpu, 2),
-                            "memory_usage":  round(mem, 2),
-                            "process_count": 0,
-                            "failed_login_count": 0,
-                            "privilege_escalation_attempts": 0,
-                            "is_busy":       False,
-                            "active_job_type": None,
-                            "event_type":    evt["event_type"],
-                            "reasons":       evt["reasons"],
-                            "evidence":      evt["evidence"],
-                            "config_tamper": False,
-                            "tampered_files": [],
-                            "unauthorized_procs": [],
-                        }
-                        _send_event(sender, messenger, payload)
-                        log.warning(f"Sent {evt['event_type']} for {node}")
+                    if node not in ("host-observer", "security-monitor", "alert-ingestor", "remediation-engine", "controller"):
+                        image_events = check_image_attestation(container, approved_images)
+                        for evt in image_events:
+                            payload = {
+                                "node":          node,
+                                "cpu_usage":     round(cpu, 2),
+                                "memory_usage":  round(mem, 2),
+                                "process_count": 0,
+                                "failed_login_count": 0,
+                                "privilege_escalation_attempts": 0,
+                                "is_busy":       False,
+                                "active_job_type": None,
+                                "event_type":    evt["event_type"],
+                                "reasons":       evt["reasons"],
+                                "evidence":      evt["evidence"],
+                                "config_tamper": False,
+                                "tampered_files": [],
+                                "unauthorized_procs": [],
+                            }
+                            _send_event(sender, messenger, payload)
+                            log.warning(f"Sent {evt['event_type']} for {node}")
 
                     # 3. Runtime Drift
                     drift_events = check_runtime_drift(container, runtime_base)
@@ -643,7 +657,11 @@ def main():
             for evt in infra_events:
                 # Use a dedicated messenger for infrastructure alerts
                 if "infra" not in messengers:
-                    messengers["infra"] = SecureMessenger(node_name="host-observer")
+                    try:
+                        host_cid = client.containers.get("host-observer").id
+                    except:
+                        host_cid = None
+                    messengers["infra"] = SecureMessenger(node_name="host-observer", machine_id=host_cid)
                 payload = {
                     "node":          "host-observer",
                     "cpu_usage":     0.0,

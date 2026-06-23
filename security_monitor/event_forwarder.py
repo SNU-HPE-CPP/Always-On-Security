@@ -68,6 +68,8 @@ class EventForwarder:
                 "security_alert": True,
                 "node":      node_name,   # required by engine.validate() → "_offset" + "node"
                 "node_id":   node_name,   # consumed by AlertManager.emit_from_event()
+                "event_type":  event.get("threat_type"),
+                "reasons":     [event.get("threat_type")],
                 "threat_type": event.get("threat_type"),
                 "severity":    event.get("severity"),
                 "description": event.get("description"),

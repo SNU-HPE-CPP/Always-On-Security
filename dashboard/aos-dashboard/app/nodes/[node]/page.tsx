@@ -7,6 +7,9 @@ import { Card } from "@/components/ui/card";
 import { useNodeDetails } from "@/hooks/useNodeDetails";
 import { useNodeIdentity } from "@/hooks/useNodeIdentity";
 import { useNodeSecurity } from "@/hooks/useNodeSecurity";
+import { useIncidentSummary } from "@/hooks/useIncidentSummary";
+
+import { ForensicPanel } from "@/components/review/incident-card";
 
 import { NodeTimeline } from "@/components/nodes/node-timeline";
 import { RulesCard } from "@/components/nodes/rules-card";
@@ -27,6 +30,7 @@ export default function NodeDetailsPage({
 
   const { data: identity } = useNodeIdentity(node);
   const { data: security } = useNodeSecurity(node);
+  const { data: incidentSummary } = useIncidentSummary(node);
 
   if (isLoading) {
     return (
@@ -223,6 +227,15 @@ export default function NodeDetailsPage({
           <h2 className="mb-4 text-xl font-semibold text-white">
             Investigation History
           </h2>
+
+          {incidentSummary?.forensic_summary && (
+            <div className="mb-6">
+              <h3 className="mb-3 text-lg font-medium text-red-400">
+                Pre-Quarantine Forensic Evidence
+              </h3>
+              <ForensicPanel summary={incidentSummary} />
+            </div>
+          )}
 
           <div className="grid gap-6 xl:grid-cols-2">
             <RiskTrend data={history ?? []} />

@@ -71,10 +71,12 @@ def _load_machine_id() -> str:
 
 class SecureMessenger:
     def __init__(self, node_name: str, secret_bytes: bytes = None, machine_id: str = None):
+        import time
         self._node = node_name
         self._secret = secret_bytes or _load_hmac_secret()
         self._machine_id = machine_id or _load_machine_id()
-        self._seq = 0
+        # Initialize seq with current time in milliseconds to ensure monotonicity across restarts
+        self._seq = int(time.time() * 1000)
         self._lock = threading.Lock()
 
     def _next_seq(self) -> int:

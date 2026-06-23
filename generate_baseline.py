@@ -40,9 +40,7 @@ DEFAULT_FILES = ["/etc/hosts", "/etc/passwd", "/etc/sudoers"]
 # Kept in sync with check_config_integrity.py SERVICE_CONFIG_FILES list.
 SERVICE_CONFIG_FILES = [
     "rules.yaml",
-    "allowlist.yaml",
-    "thresholds.yaml",
-    "node_criticality.yaml",
+    "master_config.yaml",
 ]
 
 DEFAULT_OUT = "./risk_engine/config/config_hashes.yaml"

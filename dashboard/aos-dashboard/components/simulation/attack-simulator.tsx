@@ -119,6 +119,26 @@ const ATTACKS: AttackDefinition[] = [
     expectedAlerts: ["CONTAINER_EXEC", "RUNTIME_DRIFT", "↑ score multiplier"],
     nodeSpecific: true,
   },
+  {
+    id: "image_mismatch_demo",
+    category: "exec",
+    name: "[DEMO] Image Mismatch",
+    description:
+      "Simulates an attacker tampering with the container image, resulting in a digest mismatch.",
+    severity: "HIGH",
+    expectedAlerts: ["IMAGE_MISMATCH"],
+    nodeSpecific: true,
+  },
+  {
+    id: "multi_signal_demo",
+    category: "correlated",
+    name: "[DEMO] Multi-Signal Chain",
+    description:
+      "Simulates a coordinated attack chain generating multiple critical threats.",
+    severity: "CRITICAL",
+    expectedAlerts: ["CONTAINER_EXEC", "RUNTIME_DRIFT"],
+    nodeSpecific: true,
+  },
 ];
 
 // ── Category config ───────────────────────────────────────────────────────────
@@ -159,11 +179,13 @@ const ATTACK_ICONS: Record<string, ComponentType<{ className?: string }>> = {
   suspicious_restart: RotateCcw,
   runtime_drift_network: Network,
   image_mismatch: Package2,
+  image_mismatch_demo: Package2,
   rogue_node: Ghost,
   replay_attack: Repeat2,
   config_tamper: FileCode2,
   allowlist_tamper: ShieldOff,
   multi_signal: Zap,
+  multi_signal_demo: Zap,
 };
 
 const KNOWN_NODES = ["node1", "node2", "node3", "node4"];

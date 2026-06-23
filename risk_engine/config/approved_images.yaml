@@ -6,7 +6,7 @@
 #   python3 scripts/capture_approved_images.py
 
 approved_images:
-  node1: cpp2_project-node1@sha256:a69f50250b25d3bf83aa7f292b1daccd6214413adb8c2cb5b056009df2110013
-  node2: cpp2_project-node2@sha256:1b2b2451d53ff77086ef8fceea0fb41f83b3d431294db25e4880e2c2e8128de3
-  node3: cpp2_project-node3@sha256:7733b0c71e249c90e40c7916a8d77a30ee858287d98bb7369e730265c9aa03f4
-  node4: cpp2_project-node4@sha256:0f482efa2fa5cd004d2efa0fea950c3bf61e61797e95397af921a3e8ae5bcbe2
+  node1: always-on-security-node1@sha256:8cccb5f69e448565b671041b5e7a014b26ccdd5e074494c2d0d2016e1fdc60d9
+  node2: always-on-security-node2@sha256:ec78e0731c51a04a525c53571032f78396a49f1b1abe4b10bf201ed983216ca0
+  node3: always-on-security-node3@sha256:f3897648a20fe635d14d700d953f39411ff57bc692e37ec9dab126d7e327b228
+  node4: always-on-security-node4@sha256:bc297d27b1f2d410dd19d70dda61d432a0cded12187026692b421e8dacaeff6d

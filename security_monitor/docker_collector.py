@@ -86,14 +86,14 @@ def run_docker_collector(event_queue):
 
                     # exec events — operator executed something inside container
                     elif action in ("exec_create", "exec_start", "exec_die"):
+                        if action != "exec_start":
+                            continue
                         exec_cmd = attrs.get("execID", "") or attrs.get("exec_cmd", "")
                         log.warning(
                             f"[CONTAINER_EXEC] node={name} action={action} "
                             f"exec_id={exec_cmd}"
                         )
-                        base_evt["threat_type"] = (
-                            "UNEXPECTED_EXEC" if action == "exec_start" else "CONTAINER_EXEC"
-                        )
+                        base_evt["threat_type"] = "UNEXPECTED_EXEC"
                         base_evt["exec_id"] = exec_cmd
 
                     # rename — container identity manipulation
@@ -126,6 +126,8 @@ def run_docker_collector(event_queue):
                     network_name   = attrs.get("name", "")
                     if container_name in MONITORED_NODES:
                         if action in ("connect", "disconnect"):
+                            if action != "connect":
+                                continue
                             log.warning(
                                 f"[NETWORK_{action.upper()}] "
                                 f"container={container_name} network={network_name}"

@@ -157,13 +157,20 @@
       margin-bottom: 1.5rem;
     }
 
+    .grid-1-2 {
+      display: grid;
+      grid-template-columns: 1fr 2fr;
+      gap: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
     @media (max-width: 1100px) {
       .grid-4 {
         grid-template-columns: repeat(2, 1fr);
       }
 
-      .grid-3 {
-        grid-template-columns: 1fr 1fr;
+      .grid-3, .grid-1-2 {
+        grid-template-columns: 1fr;
       }
     }
 
@@ -813,111 +820,114 @@
 
     </div>
 
-    <!-- ── Row 4: Security Alert Feed ───────────────────────────────── -->
-    <div class="card">
-      <div class="card-header">
-        <span class="card-title">🚨 Security Alert Feed</span>
-        <div style="display:flex; gap:8px; align-items:center;">
-          <select id="sev-filter"
-            style="background:var(--bg-card2); color:var(--text-dim); border:1px solid var(--border); border-radius:6px; padding:3px 8px; font-size:0.72rem; cursor:pointer;">
-            <option value="">All severities</option>
-            <option value="CRITICAL">Critical</option>
-            <option value="HIGH">High</option>
-            <option value="MEDIUM">Medium</option>
-            <option value="LOW">Low</option>
-            <option value="INFO">Info</option>
-          </select>
-          <span class="refresh-tag" id="alert-last-refresh">–</span>
+    <!-- ── Row 4 & 5: Security Alert Feed + Legacy Events ───────────────────────────────── -->
+    <div class="grid-1-2">
+      <!-- Alert Feed (1 Column) -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">🚨 Security Alert Feed</span>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <select id="sev-filter"
+              style="background:var(--bg-card2); color:var(--text-dim); border:1px solid var(--border); border-radius:6px; padding:3px 8px; font-size:0.72rem; cursor:pointer;">
+              <option value="">All severities</option>
+              <option value="CRITICAL">Critical</option>
+              <option value="HIGH">High</option>
+              <option value="MEDIUM">Medium</option>
+              <option value="LOW">Low</option>
+              <option value="INFO">Info</option>
+            </select>
+            <span class="refresh-tag" id="alert-last-refresh">–</span>
+          </div>
+        </div>
+        <div class="alert-feed">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Node</th>
+                <th>Severity</th>
+                <th>Threat Type</th>
+                <th>Description</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="alert-tbody">
+              <tr>
+                <td colspan="6" class="empty-state">Loading security alerts…</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
-      <div class="alert-feed">
-        <table>
-          <thead>
-            <tr>
-              <th>Time</th>
-              <th>Node</th>
-              <th>Severity</th>
-              <th>Threat Type</th>
-              <th>Description</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody id="alert-tbody">
-            <tr>
-              <td colspan="6" class="empty-state">Loading security alerts…</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
 
-    <!-- ── Row 5: Legacy Events ──────────────────────────────────────── -->
-    <div class="card" style="margin-top:1.5rem;">
-      <div class="card-header">
-        <span class="card-title">📋 Recent Telemetry Events</span>
-        <div style="display:flex; gap:12px;">
-          <span class="stat-sub">Total: <strong style="color:var(--text-primary)">{{ total_events }}</strong></span>
-          <span class="stat-sub">Quarantine: <strong class="glow-red">{{ high_risk }}</strong></span>
-          <span class="stat-sub">Correlated: <strong class="glow-purple">{{ correlated_count }}</strong></span>
+      <!-- Recent Telemetry (2 Columns) -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">📋 Recent Telemetry Events</span>
+          <div style="display:flex; gap:12px;">
+            <span class="stat-sub">Total: <strong style="color:var(--text-primary)">{{ total_events }}</strong></span>
+            <span class="stat-sub">Quarantine: <strong class="glow-red">{{ high_risk }}</strong></span>
+            <span class="stat-sub">Correlated: <strong class="glow-purple">{{ correlated_count }}</strong></span>
+          </div>
         </div>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Timestamp</th>
-              <th>Node</th>
-              <th>CPU%</th>
-              <th>Mem%</th>
-              <th>Event Type</th>
-              <th>Bucket</th>
-              <th>Score</th>
-              <th>Rules</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for event in events %}
-            <tr>
-              <td class="mono">{{ event.timestamp[:19] if event.timestamp else '—' }}</td>
-              <td><strong>{{ event.node }}</strong></td>
-              <td>{{ "%.1f"|format(event.cpu_usage or 0) }}</td>
-              <td>{{ "%.1f"|format(event.memory_usage or 0) }}</td>
-              <td>
-                {% if event.event_type == 'SUSPICIOUS_ACTIVITY' %}
-                <span style="color:var(--sev-high)">⚠ {{ event.event_type }}</span>
-                {% elif event.event_type == 'SECURITY_ALERT' %}
-                <span style="color:var(--sev-critical)">🚨 {{ event.event_type }}</span>
-                {% elif event.event_type == 'NODE_UNRESPONSIVE' %}
-                <span style="color:var(--sev-medium)">💤 {{ event.event_type }}</span>
-                {% elif event.event_type == 'FIM_EVENT' %}
-                <span style="color:var(--sev-medium)">📁 FIM_EVENT</span>
-                {% else %}
-                <span style="color:var(--text-muted)">{{ event.event_type }}</span>
-                {% endif %}
-              </td>
-              <td>
-                {% set b = event.bucket or 'silent' %}
-                {% if b == 'quarantine' %}
-                <span class="badge badge-critical">QUARANTINE</span>
-                {% elif b == 'human' %}
-                <span class="badge badge-high">HUMAN REVIEW</span>
-                {% elif b == 'auto' %}
-                <span class="badge badge-medium">AUTO</span>
-                {% else %}
-                <span class="badge badge-info">{{ b.upper() }}</span>
-                {% endif %}
-                {% if event.correlated %}<span class="badge badge-low" style="margin-left:4px;">CORR</span>{% endif %}
-              </td>
-              <td class="mono">{{ "%.2f"|format(event.risk_score or 0) }}</td>
-              <td style="font-size:0.68rem; color:var(--text-muted);">{{ event.matched_rules or '—' }}</td>
-            </tr>
-            {% else %}
-            <tr>
-              <td colspan="8" class="empty-state">No events yet.</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>Node</th>
+                <th>CPU%</th>
+                <th>Mem%</th>
+                <th>Event Type</th>
+                <th>Bucket</th>
+                <th>Score</th>
+                <th>Rules</th>
+              </tr>
+            </thead>
+            <tbody id="events-tbody">
+              {% for event in events %}
+              <tr>
+                <td class="mono">{{ event.timestamp[:19] if event.timestamp else '—' }}</td>
+                <td><strong>{{ event.node }}</strong></td>
+                <td>{{ "%.1f"|format(event.cpu_usage or 0) }}</td>
+                <td>{{ "%.1f"|format(event.memory_usage or 0) }}</td>
+                <td>
+                  {% if event.event_type == 'SUSPICIOUS_ACTIVITY' %}
+                  <span style="color:var(--sev-high)">⚠ {{ event.event_type }}</span>
+                  {% elif event.event_type == 'SECURITY_ALERT' %}
+                  <span style="color:var(--sev-critical)">🚨 {{ event.event_type }}</span>
+                  {% elif event.event_type == 'NODE_UNRESPONSIVE' %}
+                  <span style="color:var(--sev-medium)">💤 {{ event.event_type }}</span>
+                  {% elif event.event_type == 'FIM_EVENT' %}
+                  <span style="color:var(--sev-medium)">📁 FIM_EVENT</span>
+                  {% else %}
+                  <span style="color:var(--text-muted)">{{ event.event_type }}</span>
+                  {% endif %}
+                </td>
+                <td>
+                  {% set b = event.bucket or 'silent' %}
+                  {% if b == 'quarantine' %}
+                  <span class="badge badge-critical">QUARANTINE</span>
+                  {% elif b == 'human' %}
+                  <span class="badge badge-high">HUMAN REVIEW</span>
+                  {% elif b == 'auto' %}
+                  <span class="badge badge-medium">AUTO</span>
+                  {% else %}
+                  <span class="badge badge-info">{{ b.upper() }}</span>
+                  {% endif %}
+                  {% if event.correlated %}<span class="badge badge-low" style="margin-left:4px;">CORR</span>{% endif %}
+                </td>
+                <td class="mono">{{ "%.2f"|format(event.risk_score or 0) }}</td>
+                <td style="font-size:0.68rem; color:var(--text-muted);">{{ event.matched_rules or '—' }}</td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="8" class="empty-state">No events yet.</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
 
@@ -1295,6 +1305,67 @@
 
     let isModalOpen = false;
 
+    async function refreshEvents() {
+      const data = await fetchJSON('/api/events');
+      const tbody = document.getElementById('events-tbody');
+      if (!tbody) return;
+      tbody.replaceChildren();
+
+      if (!data || !data.length) {
+        tbody.appendChild(el('tr', null,
+          el('td', { colspan: '8', class: 'empty-state' }, 'No events yet.')
+        ));
+        return;
+      }
+
+      for (const e of data) {
+        let typeEl;
+        if (e.event_type === 'SUSPICIOUS_ACTIVITY') {
+          typeEl = el('span', { style: 'color:var(--sev-high)' }, '⚠ ' + e.event_type);
+        } else if (e.event_type === 'SECURITY_ALERT') {
+          typeEl = el('span', { style: 'color:var(--sev-critical)' }, '🚨 ' + e.event_type);
+        } else if (e.event_type === 'NODE_UNRESPONSIVE') {
+          typeEl = el('span', { style: 'color:var(--sev-medium)' }, '💤 ' + e.event_type);
+        } else if (e.event_type === 'FIM_EVENT') {
+          typeEl = el('span', { style: 'color:var(--sev-medium)' }, '📁 FIM_EVENT');
+        } else {
+          typeEl = el('span', { style: 'color:var(--text-muted)' }, e.event_type || '—');
+        }
+
+        let bucketEl;
+        const b = (e.bucket || 'silent').toLowerCase();
+        if (b === 'quarantine') {
+          bucketEl = el('span', { class: 'badge badge-critical' }, 'QUARANTINE');
+        } else if (b === 'human') {
+          bucketEl = el('span', { class: 'badge badge-high' }, 'HUMAN REVIEW');
+        } else if (b === 'auto') {
+          bucketEl = el('span', { class: 'badge badge-medium' }, 'AUTO');
+        } else {
+          bucketEl = el('span', { class: 'badge badge-info' }, b.toUpperCase());
+        }
+
+        const bucketContainer = el('td', null, bucketEl);
+        if (e.correlated) {
+          const corrBadge = el('span', { class: 'badge badge-low', style: 'margin-left:4px;' }, 'CORR');
+          bucketContainer.appendChild(corrBadge);
+        }
+
+        const rulesStr = (e.matched_rules && e.matched_rules.length > 0) ? JSON.stringify(e.matched_rules) : '—';
+
+        const tr = el('tr', null,
+          el('td', { class: 'mono' }, fmtTime(e.timestamp)),
+          el('td', null, el('strong', null, e.node || '—')),
+          el('td', null, (e.cpu_usage || 0).toFixed(1)),
+          el('td', null, (e.memory_usage || 0).toFixed(1)),
+          el('td', null, typeEl),
+          bucketContainer,
+          el('td', { class: 'mono' }, (e.risk_score || 0).toFixed(2)),
+          el('td', { style: 'font-size:0.68rem; color:var(--text-muted);' }, rulesStr)
+        );
+        tbody.appendChild(tr);
+      }
+    }
+
     async function tick() {
       if (!isModalOpen) {
         await Promise.allSettled([
@@ -1302,6 +1373,7 @@
           refreshNodeTable(),
           refreshIdentityTable(),
           refreshAlerts(),
+          refreshEvents(),
         ]);
       }
     }
