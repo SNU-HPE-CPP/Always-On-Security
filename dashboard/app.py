@@ -426,7 +426,7 @@ def get_node_details(node):
             SELECT timestamp, reasons, risk_score, weighted_score, bucket, matched_rules
             FROM events
             WHERE node = ?
-              AND bucket IN ('human', 'auto', 'quarantine')
+              AND bucket IS NOT NULL
             ORDER BY id DESC LIMIT 15
         """,
             (node,),

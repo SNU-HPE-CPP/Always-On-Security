@@ -39,15 +39,20 @@ CONFIG = "/opt/security/config"
 # preferred but optional at the engine level — the controller is the
 # enforcer. We keep _offset as mandatory.
 REQUIRED_FIELDS = {
-    "node", "cpu_usage", "memory_usage",
-    "process_count", "event_type", "reasons", "_offset",
+    "node",
+    "cpu_usage",
+    "memory_usage",
+    "process_count",
+    "event_type",
+    "reasons",
+    "_offset",
 }
 
 # Track when each node was last seen (for heartbeat)
-node_last_seen      = {}
+node_last_seen = {}
 node_last_seen_lock = threading.Lock()
 
-NODE_LIST         = ["node1", "node2", "node3", "node4"]
+NODE_LIST = ["node1", "node2", "node3", "node4"]
 HEARTBEAT_TIMEOUT = 30  # seconds — default; per-node config read by ThreatDetector
 
 
@@ -99,7 +104,6 @@ def heartbeat_checker(
                         #  1. Dashboard shows the node as quarantined (not missing)
                         #  2. Heartbeat checker skips it next iteration
                         #  3. Simulator's _wait_for_running can start it if needed
-                        store.update_node_status(node=node, status="quarantined", risk_score=0.0)
                         log.info(f"Node {node} status set to quarantined in store")
                     except Exception as e:
                         log.error(f"Heartbeat processing error: {e}")
@@ -109,23 +113,23 @@ def heartbeat_checker(
 def main():
     store = Store()
 
-    correlator  = Correlator(window_seconds=600, threshold_nodes=3, multiplier=1.5)
+    correlator = Correlator(window_seconds=600, threshold_nodes=3, multiplier=1.5)
     past_events = store.warm_restart_events(window_seconds=600)
     correlator.warm_restart(past_events)
 
     pipeline = Pipeline(
-        enricher  = Enricher(store),
-        correlator= correlator,
-        rules     = RuleEngine.from_yaml(f"{CONFIG}/rules.yaml"),
-        scorer    = WeightedScorer.from_yaml(
+        enricher=Enricher(store),
+        correlator=correlator,
+        rules=RuleEngine.from_yaml(f"{CONFIG}/rules.yaml"),
+        scorer=WeightedScorer.from_yaml(
             f"{CONFIG}/thresholds.yaml",
             f"{CONFIG}/node_criticality.yaml",
         ),
-        router    = Router.from_yaml(f"{CONFIG}/thresholds.yaml", store=store),
+        router=Router.from_yaml(f"{CONFIG}/thresholds.yaml", store=store),
     )
 
     threat_detector = ThreatDetector(store)
-    alert_manager   = AlertManager(store)
+    alert_manager = AlertManager(store)
 
     engine_state = {"last_offset": store.last_committed_offset()}
     log.info(f"Risk engine ready — resuming from offset {engine_state['last_offset']}")
@@ -133,7 +137,13 @@ def main():
     # Start cmd server thread
     cmd_thread = threading.Thread(
         target=run_cmd_server,
-        args=(store, pipeline.router, engine_state),
+        args=(
+            store,
+            pipeline.router,
+            engine_state,
+            node_last_seen,
+            node_last_seen_lock,
+        ),
         name="CmdServer",
         daemon=True,
     )
@@ -150,7 +160,7 @@ def main():
     hb_thread.start()
     log.info("Started heartbeat checker thread")
 
-    ctx  = zmq.Context()
+    ctx = zmq.Context()
     sock = ctx.socket(zmq.PULL)
     sock.bind("tcp://*:5556")
     log.info("Listening on tcp://*:5556")
@@ -164,14 +174,15 @@ def main():
 
         if not validate(event):
             log.warning(
-                f"Dropped malformed event (missing fields): "
-                f"{sorted(event.keys())}"
+                f"Dropped malformed event (missing fields): " f"{sorted(event.keys())}"
             )
             continue
 
         offset = event["_offset"]
         if offset <= engine_state["last_offset"]:
-            log.debug(f"Skipping replayed offset {offset} (committed={engine_state['last_offset']})")
+            log.debug(
+                f"Skipping replayed offset {offset} (committed={engine_state['last_offset']})"
+            )
             continue
 
         # Update heartbeat tracking
