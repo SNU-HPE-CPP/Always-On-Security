@@ -4,7 +4,6 @@ import { ThreatDistribution } from "@/components/dashboard/threat-distribution";
 import { SeverityBreakdown } from "@/components/dashboard/severity-breakdown";
 import { RecentAlerts } from "@/components/dashboard/recent-alerts";
 import { HighRiskNodes } from "@/components/dashboard/high-risk-nodes";
-import { AttackSimulator } from "@/components/simulation/attack-simulator";
 
 export default function DashboardPage() {
   return (
@@ -45,21 +44,6 @@ export default function DashboardPage() {
           <RecentAlerts />
           <HighRiskNodes />
         </div>
-
-        {/* Divider */}
-        <div className="relative">
-          <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-zinc-800" />
-          </div>
-          <div className="relative flex justify-center">
-            <span className="bg-zinc-950 px-4 text-xs font-medium uppercase tracking-widest text-zinc-600">
-              Red Team Controls
-            </span>
-          </div>
-        </div>
-
-        {/* Attack Simulation Panel */}
-        <AttackSimulator />
       </div>
     </div>
   );

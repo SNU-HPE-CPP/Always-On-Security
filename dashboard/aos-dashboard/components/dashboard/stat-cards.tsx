@@ -9,7 +9,6 @@ import { useStats } from "@/hooks/useDashboard";
 
 export function StatCards() {
   const { data } = useStats();
-  console.log(data)
   const critical =
     (data?.by_severity?.CRITICAL ?? 0) + (data?.by_severity?.HIGH ?? 0);
 

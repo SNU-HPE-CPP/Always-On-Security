@@ -31,7 +31,7 @@ const items = [
   },
   {
     title: "Simulate",
-    href: "/#simulate",
+    href: "/simulate",
     icon: Swords,
   },
 ];
