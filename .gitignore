@@ -43,5 +43,8 @@ merge-analysis.md
 network_layers.md
 .agents
 .claude/
+.serena/
+out.json
+compliance_report.txt
 # Local data folder
 data/

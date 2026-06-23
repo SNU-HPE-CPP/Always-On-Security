@@ -32,6 +32,22 @@ DEFAULT_OUTPUT = PROJECT_DIR / "compliance_report.txt"
 NIST_REF = "NIST SP 800-223 (Feb 2024)"
 SYSTEM_NAME = "Always-On HPC Security — Monolithic Containerised Cluster"
 
+# checkov check_id → our control id
+CHECKOV_CONTROL_MAP = {
+    "CKV_DOCKER_3":  "AC-03",   # non-root USER instruction
+    "CKV2_DOCKER_1": "AC-03",   # no sudo in Dockerfile
+    "CKV_DOCKER_2":  "CS-02",   # HEALTHCHECK instruction present
+}
+
+# docker-bench section id → our control id
+BENCH_CONTROL_MAP = {
+    "4.1":  "AC-03",   # non-root user running containers
+    "5.5":  "AC-03",   # no privileged containers
+    "5.32": "AC-04",   # docker socket not mounted inside containers
+    "5.10": "AC-01",   # host network namespace not shared
+    "5.31": "AC-03",   # host user namespace not shared
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Shell helpers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -82,6 +98,87 @@ def stack_status():
     for s in CORE_SERVICES:
         status[s] = "UP" if container_up(s) else "DOWN"
     return status
+
+
+def run_checkov() -> dict:
+    """Run checkov on Dockerfiles; return {control_id: 'PASS'|'FAIL', ...}.
+    ponytail: per-file results collapsed to per-control worst-case."""
+    out, rc = sh(
+        f"checkov -d {PROJECT_DIR} --framework dockerfile --output json --quiet",
+        timeout=120,
+    )
+    if not out.strip():
+        return {}
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError:
+        return {}
+
+    items = data if isinstance(data, list) else [data]
+    # Collect all check_ids that passed and failed across all Dockerfiles
+    passed_ids, failed_ids = set(), set()
+    for item in items:
+        r = item.get("results", {})
+        for c in r.get("passed_checks", []):
+            passed_ids.add(c["check_id"])
+        for c in r.get("failed_checks", []):
+            failed_ids.add(c["check_id"])
+
+    # Map to control IDs; a single failure anywhere marks the control FAIL
+    control_results = {}
+    for check_id, ctrl_id in CHECKOV_CONTROL_MAP.items():
+        if check_id in failed_ids:
+            control_results[ctrl_id] = "TOOL_FAIL"
+        elif check_id in passed_ids and ctrl_id not in control_results:
+            control_results[ctrl_id] = "TOOL_PASS"
+
+    return control_results
+
+
+def run_docker_bench() -> dict:
+    """Run docker-bench-security via Docker; return {control_id: 'PASS'|'WARN', ...}.
+    ponytail: reads auto-generated JSON log from a named volume."""
+    import tempfile, os
+    log_dir = tempfile.mkdtemp(prefix="bench_")
+    out, rc = sh(
+        f"docker run --rm --net host --pid host --userns host "
+        f"--cap-add audit_control "
+        f"-v /etc:/etc:ro "
+        f"-v /var/lib:/var/lib:ro "
+        f"-v /var/run/docker.sock:/var/run/docker.sock:ro "
+        f"-v {log_dir}:/var/log "
+        f"--label docker_bench_security "
+        f"docker/docker-bench-security -l /var/log 2>/dev/null",
+        timeout=120,
+    )
+    json_log = os.path.join(log_dir, "docker-bench-security.log.json")
+    if not os.path.exists(json_log):
+        return {}
+    try:
+        with open(json_log) as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+    finally:
+        import shutil
+        shutil.rmtree(log_dir, ignore_errors=True)
+
+    # Flatten results: {section_id: result_str}
+    flat = {}
+    for section in data.get("tests", []):
+        for r in section.get("results", []):
+            flat[r["id"]] = r.get("result", "INFO")
+
+    control_results = {}
+    for bench_id, ctrl_id in BENCH_CONTROL_MAP.items():
+        result = flat.get(bench_id)
+        if result == "PASS":
+            if ctrl_id not in control_results:
+                control_results[ctrl_id] = "TOOL_PASS"
+        elif result == "WARN":
+            control_results[ctrl_id] = "TOOL_FAIL"
+
+    return control_results
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -409,7 +506,7 @@ def query_db(db_path: str) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Compliance control definitions  (control_id, title, nist_ref, implementation, status, evidence)
-CONTROLS = [
+_CONTROLS_BASE = [
     # Architecture / Zoning
     ("AC-01", "Three-Tier Network Zone Isolation",
      "§4.1 Network Segmentation",
@@ -605,13 +702,41 @@ CONTROLS = [
 ]
 
 # GAP-04 (Falco kernel probe compatibility) has been RESOLVED:
+
+
+def build_controls(tool_results: dict) -> list:
+    """Merge checkov/bench tool evidence into control statuses.
+    tool_results: {control_id: 'TOOL_PASS'|'TOOL_FAIL'}
+    Returns list of tuples with same structure as _CONTROLS_BASE but
+    status replaced by tool evidence where available, plus source tag appended."""
+    out = []
+    for cid, title, nist_ref, impl, status, evidence in _CONTROLS_BASE:
+        tool_status = tool_results.get(cid)
+        if tool_status == "TOOL_FAIL":
+            new_status = "TOOL_FAIL"
+            new_evidence = evidence + f" [checkov/bench: FAIL]"
+        elif tool_status == "TOOL_PASS":
+            new_status = "COMPLIANT"
+            new_evidence = evidence + f" [checkov/bench: PASS]"
+        else:
+            new_status = status          # keep original (COMPLIANT / PARTIAL / NOT IMPLEMENTED)
+            new_evidence = evidence + " [asserted]"
+        out.append((cid, title, nist_ref, impl, new_status, new_evidence))
+    return out
+
+
+# ponytail: module-level alias so generate_txt() works with or without tool results
+CONTROLS = _CONTROLS_BASE
 # Falco 0.44.1 with modern eBPF is confirmed working on Linux 6.11.0-19-generic.
 
 SEV_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
 
 
 def generate_txt(metrics: dict, experiments: list, report_time: str,
-                 service_status: dict) -> str:
+                 service_status: dict, controls: list = None) -> str:
+
+    if controls is None:
+        controls = CONTROLS
 
     W = 80
 
@@ -643,10 +768,11 @@ def generate_txt(metrics: dict, experiments: list, report_time: str,
     }
     detected_count = sum(e_detected.values())
     detection_rate = round(detected_count / 4 * 100)
-    total_controls = len(CONTROLS)
-    compliant      = sum(1 for c in CONTROLS if c[4] == "COMPLIANT")
-    partial        = sum(1 for c in CONTROLS if c[4] == "PARTIAL")
-    not_impl       = sum(1 for c in CONTROLS if c[4] == "NOT IMPLEMENTED")
+    total_controls = len(controls)
+    compliant      = sum(1 for c in controls if c[4] == "COMPLIANT")
+    partial        = sum(1 for c in controls if c[4] == "PARTIAL")
+    not_impl       = sum(1 for c in controls if c[4] in ("NOT IMPLEMENTED", "TOOL_FAIL"))
+    tool_fail      = sum(1 for c in controls if c[4] == "TOOL_FAIL")
     compliance_pct = round(compliant / total_controls * 100)
     ta = metrics.get("total_alerts", 0)
     te = metrics.get("total_events", 0)
@@ -688,7 +814,7 @@ def generate_txt(metrics: dict, experiments: list, report_time: str,
     L(section("1. EXECUTIVE SUMMARY"))
     L("")
     L(f"  Control Compliance Rate   : {compliance_pct}%  ({compliant}/{total_controls} controls)")
-    L(f"  Not Implemented           : {not_impl}  |  Partial: {partial}")
+    L(f"  Tool-Verified Failures    : {tool_fail}  |  Partial: {partial}  |  Not Implemented: {not_impl - tool_fail}")
     L(f"  Experiment Detection Rate : {detection_rate}%  ({detected_count}/4 scenarios)")
     L(f"  Total Telemetry Events    : {te:,}")
     L(f"  Security Alerts Generated : {ta:,}")
@@ -961,12 +1087,12 @@ def generate_txt(metrics: dict, experiments: list, report_time: str,
     L(f"  COMPLIANT: {compliant}  |  PARTIAL: {partial}  |  NOT IMPLEMENTED: {not_impl}")
     L("")
     col_id  = 8
-    col_st  = 17
+    col_st  = 20
     col_nist = 30
     col_title = W - col_id - col_st - col_nist - 4
     L(f"  {'ID':<{col_id}} {'STATUS':<{col_st}} {'NIST REF':<{col_nist}} TITLE")
     L(f"  {rule('-', col_id-1)} {rule('-', col_st-1)} {rule('-', col_nist-1)} {rule('-', col_title)}")
-    for cid, title, nist, impl, status, evidence in CONTROLS:
+    for cid, title, nist, impl, status, evidence in controls:
         nist_short = nist[:col_nist - 1] if len(nist) > col_nist else nist
         title_short = title[:(col_title - 1)] if len(title) > col_title else title
         L(f"  {cid:<{col_id}} {status:<{col_st}} {nist_short:<{col_nist}} {title_short}")
@@ -1101,6 +1227,15 @@ def main():
     for s, v in svc_status.items():
         print(f"    {v:4s}  {s}")
 
+    # 1b. Run static analysis tools
+    print("\n[*] Running static analysis …")
+    checkov_results = run_checkov()
+    bench_results = run_docker_bench()
+    tool_results = {**bench_results, **checkov_results}   # checkov wins on conflict
+    controls = build_controls(tool_results)
+    tool_verified = sum(1 for c in controls if "[checkov/bench:" in c[5])
+    print(f"[+] Tool-verified controls: {tool_verified}/{len(controls)}")
+
     # 2. Run experiments
     experiments = []
     if not args.skip_experiments:
@@ -1135,7 +1270,7 @@ def main():
 
     # 4. Generate report
     print("\n[*] Generating text compliance report …")
-    report = generate_txt(metrics, experiments, report_time, svc_status)
+    report = generate_txt(metrics, experiments, report_time, svc_status, controls)
 
     output_path = Path(args.output)
     with open(output_path, "w") as f:
