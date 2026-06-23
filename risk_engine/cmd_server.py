@@ -7,7 +7,6 @@ import simulator
 
 log = logging.getLogger("cmd_server")
 
-
 def run_cmd_server(store, router, engine_state):
     """
     Background thread to process ZMQ REQ commands from the dashboard.
@@ -39,12 +38,7 @@ def run_cmd_server(store, router, engine_state):
                 # Precondition check
                 status = store.get_node_status(node)
                 if status != "awaiting_approval":
-                    sock.send_json(
-                        {
-                            "ok": False,
-                            "error": f"Node in state {status}, not awaiting_approval",
-                        }
-                    )
+                    sock.send_json({"ok": False, "error": f"Node in state {status}, not awaiting_approval"})
                     continue
 
                 def _do_approve():
@@ -57,26 +51,13 @@ def run_cmd_server(store, router, engine_state):
                             if container.status == "paused":
                                 container.unpause()
                                 log.info(f"Node {node} unpaused")
-
+                        
                         # 2. Remove iptables DROP rule
                         isolated_ip = store.get_isolated_ip(node)
                         if isolated_ip:
-                            subprocess.run(
-                                [
-                                    "iptables",
-                                    "-D",
-                                    "FORWARD",
-                                    "-s",
-                                    isolated_ip,
-                                    "-j",
-                                    "DROP",
-                                ],
-                                capture_output=True,
-                            )
-                            log.info(
-                                f"Removed iptables DROP rule for {node} ({isolated_ip})"
-                            )
-
+                            subprocess.run(["iptables", "-D", "FORWARD", "-s", isolated_ip, "-j", "DROP"], capture_output=True)
+                            log.info(f"Removed iptables DROP rule for {node} ({isolated_ip})")
+                        
                         # 3. Reset scores & status
                         store.reset_node_score(node)
                         store.set_isolated_ip(node, None)
@@ -91,12 +72,7 @@ def run_cmd_server(store, router, engine_state):
             elif action == "restart":
                 status = store.get_node_status(node)
                 if status not in ("quarantined", "unresponsive"):
-                    sock.send_json(
-                        {
-                            "ok": False,
-                            "error": f"Node in state {status}, cannot restart",
-                        }
-                    )
+                    sock.send_json({"ok": False, "error": f"Node in state {status}, cannot restart"})
                     continue
 
                 def _do_restart():
@@ -104,21 +80,8 @@ def run_cmd_server(store, router, engine_state):
                         # 1. Remove iptables DROP rule
                         isolated_ip = store.get_isolated_ip(node)
                         if isolated_ip:
-                            subprocess.run(
-                                [
-                                    "iptables",
-                                    "-D",
-                                    "FORWARD",
-                                    "-s",
-                                    isolated_ip,
-                                    "-j",
-                                    "DROP",
-                                ],
-                                capture_output=True,
-                            )
-                            log.info(
-                                f"Removed iptables DROP rule for {node} ({isolated_ip})"
-                            )
+                            subprocess.run(["iptables", "-D", "FORWARD", "-s", isolated_ip, "-j", "DROP"], capture_output=True)
+                            log.info(f"Removed iptables DROP rule for {node} ({isolated_ip})")
 
                         # 2. Start/unpause container
                         client = router._get_docker()
@@ -143,18 +106,17 @@ def run_cmd_server(store, router, engine_state):
                 sock.send_json({"ok": True, "status": "idle"})
 
             elif action == "reset":
-
                 def _do_reset():
                     try:
                         # 1. DB reset
                         store.reset_all_tables()
                         # 2. Memory reset
                         engine_state["last_offset"] = 0
-
+                        
                         # 3. Controller reset file
                         if os.path.exists("/data/controller.offset"):
                             os.remove("/data/controller.offset")
-
+                            
                         # 4. Container restart
                         client = router._get_docker()
                         if client:
@@ -162,47 +124,31 @@ def run_cmd_server(store, router, engine_state):
                                 try:
                                     container = client.containers.get(n)
                                     container.reload()
-                                    if container.status in (
-                                        "exited",
-                                        "dead",
-                                        "removing",
-                                        "paused",
-                                    ):
+                                    if container.status in ("exited", "dead", "removing", "paused"):
                                         if container.status == "paused":
                                             container.unpause()
                                         else:
                                             container.start()
                                 except Exception as inner_e:
                                     log.warning(f"Could not restart {n}: {inner_e}")
-
+                        
                         # 5. Remove any leftover DROP rules by scanning node_status
                         for n in ["node1", "node2", "node3", "node4"]:
                             ip = store.get_isolated_ip(n)
                             if ip:
-                                subprocess.run(
-                                    [
-                                        "iptables",
-                                        "-D",
-                                        "FORWARD",
-                                        "-s",
-                                        ip,
-                                        "-j",
-                                        "DROP",
-                                    ],
-                                    capture_output=True,
-                                )
+                                subprocess.run(["iptables", "-D", "FORWARD", "-s", ip, "-j", "DROP"], capture_output=True)
                                 store.set_isolated_ip(n, None)
 
                         log.info("System reset complete")
                     except Exception as e:
                         log.error(f"Error during reset: {e}")
-
+                
                 _do_reset()
                 sock.send_json({"ok": True})
 
             elif action == "simulate":
                 attack = req.get("attack", "")
-                node = req.get("node")  # may be None for global attacks
+                node   = req.get("node")   # may be None for global attacks
                 result = simulator.dispatch(attack=attack, node=node, store=store)
                 sock.send_json(result)
 
