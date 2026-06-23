@@ -175,14 +175,6 @@ class Router:
                 return
             container.stop()
             log.critical(f"Node {node} quarantined (container stopped)")
-            try:
-                self.store.update_node_status(
-                    node=node,
-                    status="quarantined",
-                    risk_score=0.0,
-                )
-            except Exception as e:
-                log.warning(f"Failed to persist quarantine state for {node}: {e}")
         except Exception as e:
             log.error(f"Quarantine failed for {node}: {e}")
 

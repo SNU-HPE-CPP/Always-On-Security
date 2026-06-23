@@ -104,6 +104,9 @@ def heartbeat_checker(
                         #  1. Dashboard shows the node as quarantined (not missing)
                         #  2. Heartbeat checker skips it next iteration
                         #  3. Simulator's _wait_for_running can start it if needed
+                        store.update_node_status(
+                            node=node, status="quarantined", risk_score=0.0
+                        )
                         log.info(f"Node {node} status set to quarantined in store")
                     except Exception as e:
                         log.error(f"Heartbeat processing error: {e}")
@@ -137,13 +140,7 @@ def main():
     # Start cmd server thread
     cmd_thread = threading.Thread(
         target=run_cmd_server,
-        args=(
-            store,
-            pipeline.router,
-            engine_state,
-            node_last_seen,
-            node_last_seen_lock,
-        ),
+        args=(store, pipeline.router, engine_state),
         name="CmdServer",
         daemon=True,
     )
