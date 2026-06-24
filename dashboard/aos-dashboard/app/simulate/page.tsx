@@ -340,7 +340,7 @@ export default function AttackSimulator() {
       : ATTACKS.filter((a) => a.category === activeCategory);
 
   return (
-    <section id="simulate" className="relative space-y-6">
+    <section id="simulate" className="relative space-y-6 p-10">
       {/* ── Header ── */}
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-3">
