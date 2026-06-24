@@ -4,7 +4,6 @@ import { ThreatDistribution } from "@/components/dashboard/threat-distribution";
 import { SeverityBreakdown } from "@/components/dashboard/severity-breakdown";
 import { RecentEvents } from "@/components/dashboard/recent-events";
 import { HighRiskNodes } from "@/components/dashboard/high-risk-nodes";
-import { AttackSimulator } from "@/components/simulation/attack-simulator";
 
 export default function DashboardPage() {
   return (
@@ -57,9 +56,6 @@ export default function DashboardPage() {
             </span>
           </div>
         </div>
-
-        {/* Attack Simulation Panel */}
-        <AttackSimulator />
       </div>
     </div>
   );

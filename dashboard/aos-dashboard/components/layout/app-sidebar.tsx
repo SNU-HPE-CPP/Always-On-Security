@@ -55,7 +55,7 @@ export function AppSidebar() {
     },
     {
       title: "Simulate",
-      href: "/#simulate",
+      href: "/simulate",
       icon: Swords,
       badge: null,
     },
