@@ -58,4 +58,3 @@ policies:
 
   - threat_type: ALLOWLIST_TAMPER
     action: network_isolate
-
