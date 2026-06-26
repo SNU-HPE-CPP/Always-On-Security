@@ -48,7 +48,7 @@ node_last_seen      = {}
 node_last_seen_lock = threading.Lock()
 
 NODE_LIST         = ["node1", "node2", "node3", "node4"]
-HEARTBEAT_TIMEOUT = 30  # seconds — default; per-node config read by ThreatDetector
+HEARTBEAT_TIMEOUT = 90  # seconds — default; per-node config read by ThreatDetector
 
 
 def validate(event: dict) -> bool:
@@ -117,17 +117,18 @@ def main():
         enricher  = Enricher(store),
         correlator= correlator,
         rules     = RuleEngine.from_yaml(f"{CONFIG}/rules.yaml"),
-        scorer    = WeightedScorer.from_yaml(
-            f"{CONFIG}/thresholds.yaml",
-            f"{CONFIG}/node_criticality.yaml",
-        ),
-        router    = Router.from_yaml(f"{CONFIG}/thresholds.yaml", store=store),
+        scorer    = WeightedScorer.from_yaml(f"{CONFIG}/master_config.yaml"),
+        router    = Router.from_yaml(f"{CONFIG}/master_config.yaml", store=store),
     )
 
     threat_detector = ThreatDetector(store)
     alert_manager   = AlertManager(store)
 
-    engine_state = {"last_offset": store.last_committed_offset()}
+    engine_state = {
+        "last_offset": store.last_committed_offset(),
+        "node_last_seen": node_last_seen,
+        "node_last_seen_lock": node_last_seen_lock,
+    }
     log.info(f"Risk engine ready — resuming from offset {engine_state['last_offset']}")
 
     # Start cmd server thread
@@ -187,13 +188,8 @@ def main():
                     f"[CONTROLLER_ALERT] {alert.threat_type} | "
                     f"node={alert.node_id} | severity={alert.severity}"
                 )
-            # FIX #8: Persist offset to DB so warm-restart skips replayed events.
-            store.conn.execute(
-                "UPDATE engine_offset SET last_committed=? WHERE id=1", (offset,)
-            )
-            store.conn.commit()
-            engine_state["last_offset"] = offset
-            continue
+            # We let the event fall through to standard telemetry pipeline 
+            # so that rules are matched and node risk score increases.
 
         # ── Standard telemetry pipeline ───────────────────────────────
         try:
@@ -205,9 +201,9 @@ def main():
             status = "idle"
             if event.get("is_busy"):
                 status = "busy"
-            if decision.bucket == "quarantine":
+            if decision.bucket == "critical":
                 status = "quarantined"
-            elif decision.bucket == "human":
+            elif decision.bucket == "high":
                 status = "awaiting_approval"
             store.update_node_status(
                 node=node,

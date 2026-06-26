@@ -90,9 +90,9 @@
 
 - id: RUNTIME_DRIFT
   match:
-    reasons_contains: "Runtime drift detected"
-  severity: 60
-  blast_radius: 40
+    reasons_contains: "Runtime drift"
+  severity: 40
+  blast_radius: 20
 
 # ── Infrastructure Config Integrity (Improvement 3) ──────────────────────────
 
@@ -104,13 +104,13 @@
 
 - id: POLICY_TAMPER
   match:
-    reasons_contains: "POLICY_TAMPER"
+    reasons_contains: "rules.yaml"
   severity: 65
   blast_radius: 45
 
 - id: ALLOWLIST_TAMPER
   match:
-    reasons_contains: "ALLOWLIST_TAMPER"
+    reasons_contains: "master_config.yaml"
   severity: 70
   blast_radius: 50
 
@@ -125,8 +125,8 @@
 - id: UNEXPECTED_EXEC
   match:
     reasons_contains: "UNEXPECTED_EXEC"
-  severity: 55
-  blast_radius: 35
+  severity: 40
+  blast_radius: 25
 
 - id: SUSPICIOUS_RESTART_PATTERN
   match:
@@ -137,8 +137,8 @@
 - id: UNEXPECTED_NETWORK_ATTACH
   match:
     reasons_contains: "UNEXPECTED_NETWORK_ATTACH"
-  severity: 50
-  blast_radius: 30
+  severity: 40
+  blast_radius: 25
 
 # ── Falco Integration (Improvement 5) ────────────────────────────────────────
 

@@ -26,6 +26,7 @@ COPY risk_engine/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY risk_engine/*.py ./
+COPY shared/ /app/shared/
 
 # ── REC-08: Pre-flight config integrity check ─────────────────────────────
 # scripts/ is directly accessible from the repo-root build context.

@@ -145,7 +145,7 @@ Periodically queries the Docker inspect API to check for execution changes again
 Tracks SHA-256 hashes of internal security policy configurations on disk:
 
 - **`POLICY_TAMPER`**: Triggered if rules (`rules.yaml`) or enforcement parameters are edited.
-- **`ALLOWLIST_TAMPER`**: Triggered if node permissions (`allowlist.yaml`) are tampered with.
+- **`ALLOWLIST_TAMPER`**: Triggered if node permissions (`master_config.yaml`) are tampered with.
 - **`CONFIG_DRIFT`**: Generic drift of the active monitoring configuration baseline.
 
 ---
@@ -175,7 +175,7 @@ The Controller acts as the security bus gateway, filtering all telemetry message
 
 #### B. Rogue Node Prevention
 
-- Emits a **`ROGUE_NODE`** event and drops messages from any host whose name is not registered in the active `allowlist.yaml`.
+- Emits a **`ROGUE_NODE`** event and drops messages from any host whose name is not registered in the active `master_config.yaml`.
 
 #### C. Replay Attack Guard
 
@@ -222,57 +222,37 @@ When multiple, distinct security signals fire on a host within a configured wind
 
 ---
 
-## 8. Remediations & Mitigations
+## 8. Remediations, Mitigations & Forensics
 
-When a threat matches a specific policy or the node's cumulative risk score exceeds thresholds, automated containment actions are triggered.
+When a threat matches a specific policy or the node's cumulative risk score exceeds thresholds, automated containment actions are triggered. The transition to the `automation-tracks` architecture introduced significant resilience and debugging improvements to this layer.
 
-### Mitigation Mechanisms
+### Auto-Remediation Playbooks (`remediations.yaml`)
 
-- **Pause Node**: Executes Docker container suspension via the Docker SDK to freeze the memory state for forensics.
-- **Stop (Quarantine) Node**: Stops the container via the Docker SDK.
-- **Network Isolate**: Calls the Docker SDK to disconnect the container from `compute-net` and `storage-net`.
-- **iptables Shield**: Installs `iptables` FORWARD rules on the host bridge interface to block all packets from the target container's IP.
+Unlike traditional hardcoded scripts, the `RemediationEngine` executes targeted playbooks natively against isolated container environments using the Docker SDK:
 
-### Enforcement Strategies
+1. **`RUNTIME_DRIFT`**: *Kill Unauthorized Process* — Scans for and terminates rogue PIDs via `kill -9`.
+2. **`UNEXPECTED_NETWORK_ATTACH`**: *Isolate Rogue Network Segment* — Applies targeted `iptables` rules to drop traffic from rogue subnets while keeping the node alive for forensics.
+3. **`CONFIG_DRIFT`**: *Restore Configuration Baseline* — Forcibly overwrites tampered configurations with `/etc/config.bak` backups.
+4. **`LATERAL_MOVEMENT`**: *Revoke SSH Keys & Reset Sessions* — Kills active `sshd` sessions and rotates credentials.
+5. **`IMAGE_MISMATCH`**: *Verify Container Digest & Restart* — Verifies digest drift and prepares the node to restart from the approved manifest.
 
-```mermaid
-graph TD
-    Event[Correlated Telemetry Event] --> FPCheck{Matches Fast-Path?}
+### Human-In-The-Loop (HITL) Queue & Incident Persistence
+Threats falling into the `human` score bucket are pushed to a Review Queue. The system pauses automatic remediation and uses an LLM to generate an **Incident Narrative Block**. 
+* **Debugging Note:** To fix issues where human approvals auto-closed in the UI, `write_review_decision()` and `get_node_event_history()` were implemented in the SQLite database (`events.db`), permanently anchoring the UI's state and rendering the auto-remediation playbook execution logs chronologically.
 
-    %% Fast-Path Enforcement
-    FPCheck -- Yes --> FPAction[Apply Fast-Path Action immediately]
-    FPAction --> DockerSDK[Docker API Action: Pause/Stop/Disconnect]
-    FPAction --> HostIptables[Host Bridge iptables DROP]
+### Pre-Quarantine Forensic Snapshotting
+Immediately before a node is placed into the `critical` quarantine bucket, the Risk Engine captures a Forensic Snapshot.
+- **Captured Data**: `ps aux` output, `ss -tnp` network sockets, container inspect metadata.
+- **Persistence**: Saved as a JSON artefact in `/data/forensics/` and irrevocably bound to the `events.db` incident timeline for post-mortem analysis.
 
-    %% Cumulative Scoring
-    FPCheck -- No --> ScoreAccum[Accumulate Node Risk Score]
-    ScoreAccum --> ThresholdCheck{Score Category?}
+---
 
-    ThresholdCheck -- "silent (0-30)" --> Decay[Apply -5.0 Decay/Cycle]
-    ThresholdCheck -- "auto (31-70)" --> AlertWarn[Wazuh WARNING Log]
-    ThresholdCheck -- "human (71-100)" --> AlertHigh[Wazuh HIGH Log + Pause Node + Network Isolate]
-    ThresholdCheck -- "quarantine (>100)" --> AlertCrit[Wazuh CRITICAL Log + Stop Node + Full Quarantine]
+## 9. Telemetry Resilience & Debugging Fixes
 
-    AlertHigh & AlertCrit --> DockerSDK & HostIptables
-```
+During simulated attacks, issues with alerts dropping and risk scores failing to register were debugged and resolved by implementing two core resilience layers:
 
-#### A. Fast-Path Enforcement (`fast_path_policy.yaml`)
-
-Bypasses the scoring pipeline to apply immediate quarantine:
-
-- `ROGUE_NODE`, `NODE_IMPERSONATION`, `TELEMETRY_TAMPER` $\rightarrow$ **Quarantine (Stop & Disconnect)**
-- `REVERSE_SHELL`, `CONTAINER_ESCAPE_ATTEMPT`, `IMAGE_MISMATCH` $\rightarrow$ **Quarantine (Stop & Disconnect)**
-- `LATERAL_MOVEMENT`, `RUNTIME_DRIFT`, `PRIV_ESC_ATTEMPT` $\rightarrow$ **Pause**
-- `UNEXPECTED_NETWORK_ATTACH`, `POLICY_TAMPER`, `ALLOWLIST_TAMPER` $\rightarrow$ **Network Isolate**
-
-#### B. Cumulative Score Buckets (`thresholds.yaml`)
-
-Handles multi-alert escalation over time:
-
-- **`silent` [0 - 30]**: No enforcement. Event score decays by `-5.0` per cycle.
-- **`auto` [31 - 70]**: Triggers a Wazuh warning.
-- **`human` [71 - 100]**: Triggers a high-severity alert, pauses the container, and disconnects it from network interfaces.
-- **`quarantine` [> 100]**: Triggers a critical SIEM event and stops container execution.
+- **Monotonic Telemetry Sequencing**: The `Controller`'s `ReplayGuard` will drop telemetry if the sequence ID does not explicitly increase. `secure_messenger.py` was updated to seed its sequence using `int(time.time() * 1000)` instead of `0`, guaranteeing sequence survival across container restarts.
+- **Client-Side Rate Limiting**: The `security-monitor`'s `docker_collector` previously flooded the telemetry bus. A token bucket rate limiter was added to `event_forwarder.py` (capping at 15 messages/60s), ensuring it never triggers the central `Controller`'s `FloodGuard` ban threshold.
 
 ---
 

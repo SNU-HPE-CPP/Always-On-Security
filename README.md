@@ -92,8 +92,8 @@ The system continuously monitors tenant workload nodes and enforces security pol
   │                                                                          │
   │  ┌──────────────────────────┐                                           │
   │  │       DASHBOARD          │                                           │
-  │  │  Flask + SQLite          │                                           │
-  │  │  localhost:5000          │                                           │
+  │  │  Next.js + Flask API     │                                           │
+  │  │  localhost:3000          │                                           │
   │  └──────────────────────────┘                                           │
   └──────────────────────────────────────────────────────────────────────────┘
 
@@ -160,11 +160,9 @@ The system continuously monitors tenant workload nodes and enforces security pol
 
 | File                    | Purpose                                                 |
 | ----------------------- | ------------------------------------------------------- |
+| `master_config.yaml`    | Replaces allowlist, thresholds, fast-path, and criticality |
 | `rules.yaml`            | Rule definitions with severity and blast-radius weights |
-| `thresholds.yaml`       | Score thresholds for enforcement buckets                |
-| `allowlist.yaml`        | Authorised node names and security parameters           |
-| `node_criticality.yaml` | Per-node criticality multipliers                        |
-| `fast_path_policy.yaml` | Immediate pre-score enforcement rules                   |
+| `remediations.yaml`     | Maps threat types to automated bash playbooks           |
 | `approved_images.yaml`  | Expected image digests per workload node                |
 | `runtime_baseline.yaml` | Expected runtime config (user, caps, networks, mounts)  |
 
@@ -256,16 +254,54 @@ All infrastructure services that previously mounted `/var/run/docker.sock` direc
 | `PRIV_ESC_ATTEMPT`           | Security Monitor | 70       | 50           | Falco privilege escalation rule         |
 | `CONTAINER_ESCAPE_ATTEMPT`   | Security Monitor | 90       | 70           | Falco container escape rule             |
 
-### Enforcement Actions
+### Auto-Remediation Tracks (Playbooks)
 
-| Action              | Trigger                                                                                       | Mechanism                                        |
-| ------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| **Stop container**  | Score ≥ quarantine, IMAGE_MISMATCH, UNAPPROVED_IMAGE, REVERSE_SHELL, CONTAINER_ESCAPE_ATTEMPT | `container.stop()` via Docker API                |
-| **Pause container** | Lateral movement, RUNTIME_DRIFT, PRIV_ESC_ATTEMPT                                             | `container.pause()` via Docker API               |
-| **Network isolate** | Fan-out, UNEXPECTED_NETWORK_ATTACH, POLICY_TAMPER                                             | `network.disconnect()` compute-net + storage-net |
-| **Wazuh alert**     | Any auto/human/quarantine bucket event                                                        | UDP syslog to 10.10.3.40:5514                    |
+The system automatically triggers bash-based remediation scripts when a node's cumulative risk score enters the **Medium** (`auto`) bucket (score 41–70) or when specifically mandated by a correlated threat profile. These playbooks are executed by the Risk Engine strictly in the Infrastructure Zone.
 
-No enforcement action executes code, modifies files, or kills processes inside a tenant container.
+**Crucial Security Invariant:** No auto-remediation playbook ever executes arbitrary code, modifies internal tenant data files, or kills processes *inside* a tenant workload container. All enforcement is executed at the outer host abstraction layer.
+
+### 1. Kill Unauthorized Process (`RUNTIME_DRIFT`)
+* **Purpose:** To neutralize unauthorized processes that bypass normal container startup (e.g., processes spawned via unexpected `exec` sessions).
+* **Trigger:** The `host-observer` detects new rogue processes or newly added capabilities diverging from the `runtime_baseline.yaml`.
+* **Action Details:** 
+  1. The playbook executes `ps aux` strictly on the host.
+  2. It filters the process tree to isolate the exact Process IDs (PIDs) associated with the rogue activity originating from the compromised container.
+  3. It issues a forceful `kill -9 <PID>` to terminate the unauthorized process tree directly from the host namespace.
+* **Impact:** The rogue process is instantly killed without needing an agent inside the container, neutralizing the immediate threat.
+
+### 2. Isolate Rogue Network Segment (`UNEXPECTED_NETWORK_ATTACH`)
+* **Purpose:** To prevent lateral movement and unauthorized exfiltration when a container attempts to join a network it doesn't belong to.
+* **Trigger:** The `security-monitor` detects a workload container maliciously attaching to an unauthorized subnet (e.g., a storage network instead of the compute network).
+* **Action Details:**
+  1. The playbook dynamically targets the rogue IP blocks (e.g., `10.99.0.0/16`).
+  2. It leverages the host's `iptables` to append `DROP` rules for both `INPUT` and `OUTPUT` traffic matching the rogue subnet.
+* **Impact:** The container's access to the unauthorized segment is physically severed at the host networking level. Legitimate traffic on the management cluster net remains unaffected.
+
+### 3. Restore Configuration Baseline (`CONFIG_DRIFT`)
+* **Purpose:** To self-heal the security infrastructure if an attacker attempts to tamper with critical system configuration files.
+* **Trigger:** The `host-observer`'s integrity checks detect that the SHA-256 hashes of infrastructure configuration files drifted from the `config_hashes.yaml` baseline.
+* **Action Details:**
+  1. The playbook is triggered to run on the Infrastructure node.
+  2. It locates the secure, read-only backup directory (`/etc/config.bak`).
+  3. It executes a clean copy (`cp /etc/config.bak /etc/config`) to overwrite the tampered configuration files.
+* **Impact:** Any attacker modification to security rules or scoring weights is instantly reverted.
+
+### 4. Revoke SSH Keys & Reset (`LATERAL_MOVEMENT`)
+* **Purpose:** To instantly block attackers who are attempting to spread laterally across nodes using compromised SSH credentials.
+* **Trigger:** The `security-monitor` (via Suricata or Zeek) flags anomalous SSH login attempts, or the `host-observer` detects rogue key additions.
+* **Action Details:**
+  1. The playbook executes `pkill -9 sshd` to forcefully evict any active, unauthorized SSH sessions on the target node.
+  2. It triggers a rotation script to regenerate ephemeral SSH keys.
+* **Impact:** The lateral traversal pathway is immediately cut off. The attacker loses their session and cannot reconnect using the stolen credentials.
+
+### 5. Verify Container Digest & Restart (`IMAGE_MISMATCH`)
+* **Purpose:** To ensure that the running container image perfectly matches the cryptographically signed and approved baseline.
+* **Trigger:** The `host-observer` detects that the running container's image digest no longer matches the expected SHA-256 digest in `approved_images.yaml`.
+* **Action Details:**
+  1. The playbook signals the container runtime to stop the tampered container.
+  2. It reaches out to the trusted local container registry to re-pull the verified and approved image manifest.
+  3. It restarts the application service, thereby spawning a fresh, pristine container from the verified image.
+* **Impact:** The compromised container instance is destroyed and replaced with a clean instance, wiping out any filesystem tampering that occurred outside of persistent volumes.
 
 ### Risk Scoring Buckets
 
@@ -336,24 +372,41 @@ docker compose version
 git clone <repository-url>
 cd Always-On-Security
 cp .env.example .env          # edit HMAC_SECRET if desired
+
+# Set up the host Python virtual environment (required for automated baseline scripts)
+sudo apt install python3-venv python3-pip -y   # On Ubuntu/Debian
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r host_observer/requirements.txt
 ```
 
-After first `docker compose up`, capture the runtime and image baselines from a known-good state:
+### Start
 
+The easiest way to start the system, rebuild containers, and automatically capture/update all baseline digests and configuration hashes is by using the automated startup script:
+
+```bash
+# Make the script executable (if needed)
+chmod +x build_and_start.sh
+
+# Run the build, start, and baseline-capture automation
+./build_and_start.sh
+```
+
+This script will automatically:
+1. Build and spin up the Docker containers in detached mode.
+2. Wait for tenant workload containers (`node1` to `node4`) to initialize.
+3. Capture image baselines (`approved_images.yaml`) using the Python script.
+4. Update configuration integrity hashes (`config_hashes.yaml`).
+5. Restart the `host-observer` container so it loads the updated baselines.
+6. Stream all logs in the foreground.
+
+*Note: If you run `docker compose up --build` manually, you will need to run baseline captures yourself to prevent mismatch false-positives:*
 ```bash
 # Capture image digests
 python3 scripts/capture_approved_images.py
 
 # Capture runtime config baseline
 python3 scripts/capture_runtime_baseline.py
-```
-
-Commit the updated `risk_engine/config/approved_images.yaml` and `runtime_baseline.yaml`. Regenerate these after every intentional image rebuild or compose change.
-
-### Start
-
-```bash
-docker compose up --build
 ```
 
 Services started:
@@ -600,6 +653,16 @@ The core monitoring architecture has been significantly hardened to simulate an 
   - **Recent security alerts** — the last 20 security alerts for the node pulled from the DB.
   - **Recent telemetry events** — the last 20 risk-scored events from the `events` table.
   - Evidence is written to **two independent locations**: the `forensic_snapshots` SQLite table (queryable by the dashboard) and a timestamped JSON file under the persistent `/data/forensics` volume (survives container removal and DB resets).
+
+---
+
+## 8. Recent Architecture Debugging & Resilience Fixes
+
+During the transition to the `automation-tracks` architecture, several critical issues regarding telemetry dropping, replay attacks, and missing auto-remediation logs were identified and resolved. These fixes are now core components of the platform's resilience model:
+
+- **Monotonic Telemetry Sequencing**: To prevent the `Controller`'s `ReplayGuard` from accidentally dropping events when node agents restart, the `secure_messenger.py` now seeds its sequence counter using the epoch timestamp (`time.time() * 1000`) rather than `0`. This ensures strictly increasing sequence IDs that survive container restarts.
+- **Client-Side Event Rate Limiting**: The `docker_collector` previously flooded the ZMQ bus with minor lifecycle events, triggering the `Controller`'s `FloodGuard` (which drops traffic exceeding 20 msg/60s). A token-bucket rate limiter was introduced in `event_forwarder.py` (capping at 15 msg/60s), and the collector was tuned to only forward critical `exec_start` and `connect` events.
+- **Incident History & UI State Persistence**: Auto-remediation playbook logs were previously lost because they were not explicitly mapped back to the dashboard's query path. The `events.db` SQLite store was updated with `get_node_event_history()` and `write_review_decision()`, ensuring that LLM Narrative blocks and Human-in-the-Loop review states are permanently anchored to the database rather than relying on ephemeral UI states.
 
 ---
 

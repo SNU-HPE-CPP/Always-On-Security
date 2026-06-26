@@ -70,9 +70,12 @@ def main() -> int:
             for conn in psutil.net_connections(kind="tcp"):
                 if conn.status != psutil.CONN_LISTEN or not conn.laddr:
                     continue
+                # Ignore Docker's internal DNS resolver
+                if conn.laddr.ip == "127.0.0.11":
+                    continue
                 port = int(conn.laddr.port)
                 if port not in EXPECTED_PORTS:
-                    listeners.append({"port": port, "pid": conn.pid})
+                    listeners.append({"port": port, "pid": conn.pid, "ip": conn.laddr.ip})
 
             if listeners:
                 _emit(

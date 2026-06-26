@@ -48,3 +48,7 @@ out.json
 compliance_report.txt
 # Local data folder
 data/
+
+# Dynamically generated baseline configuration files
+risk_engine/config/approved_images.yaml
+risk_engine/config/config_hashes.yaml

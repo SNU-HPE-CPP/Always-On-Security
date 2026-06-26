@@ -2,9 +2,8 @@ import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { StatCards } from "@/components/dashboard/stat-cards";
 import { ThreatDistribution } from "@/components/dashboard/threat-distribution";
 import { SeverityBreakdown } from "@/components/dashboard/severity-breakdown";
-import { RecentAlerts } from "@/components/dashboard/recent-alerts";
+import { RecentEvents } from "@/components/dashboard/recent-events";
 import { HighRiskNodes } from "@/components/dashboard/high-risk-nodes";
-import { AttackSimulator } from "@/components/simulation/attack-simulator";
 
 export default function DashboardPage() {
   return (
@@ -40,9 +39,9 @@ export default function DashboardPage() {
           <SeverityBreakdown />
         </div>
 
-        {/* Alerts + Nodes */}
-        <div className="grid gap-6 xl:grid-cols-2">
-          <RecentAlerts />
+        {/* Events + Nodes */}
+        <div className="space-y-6">
+          <RecentEvents />
           <HighRiskNodes />
         </div>
 
@@ -57,9 +56,6 @@ export default function DashboardPage() {
             </span>
           </div>
         </div>
-
-        {/* Attack Simulation Panel */}
-        <AttackSimulator />
       </div>
     </div>
   );

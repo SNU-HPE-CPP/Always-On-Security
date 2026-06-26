@@ -46,9 +46,7 @@ log = logging.getLogger("check_config_integrity")
 # FIX #4: Removed process_policy.yaml — file does not exist in this deployment.
 SERVICE_CONFIG_FILES = [
     "rules.yaml",
-    "allowlist.yaml",
-    "thresholds.yaml",
-    "node_criticality.yaml",
+    "master_config.yaml",
 ]
 
 # ANSI colour codes (used only when stdout is a tty)

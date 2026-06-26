@@ -176,6 +176,8 @@ class AlertManager:
 
     def __init__(self, store):
         self._store = store
+        from remediation_engine import RemediationEngine
+        self.remediation_engine = RemediationEngine(store)
         log.info("AlertManager initialised.")
 
     def emit(self, signal: ThreatSignal) -> SecurityAlert:
@@ -202,6 +204,9 @@ class AlertManager:
             self._store.write_alert(alert)
         except Exception as e:
             log.error(f"Failed to persist alert {alert.alert_id}: {e}")
+
+        # Trigger auto-remediation playbooks
+        self.remediation_engine.process_alert(alert)
 
         return alert
 

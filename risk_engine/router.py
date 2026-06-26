@@ -55,22 +55,31 @@ class Router:
             f"rules={rule_ids}"
         )
 
-        if bucket == "silent":
+        if bucket == "info":
             return
 
-        elif bucket == "auto":
-            log.warning(f"[AUTO-REMEDIATION] node={node} score={score:.2f}")
+        elif bucket == "low":
             self._send_alert_ingestor_alert(
                 node=node,
                 risk_score=score,
                 reasons=reasons,
                 rule_ids=rule_ids,
                 correlated=decision.correlated,
-                severity="WARNING",
+                severity="LOW",
             )
 
-        elif bucket == "human":
-            log.warning(f"[HUMAN_REVIEW] node={node} score={score:.2f}")
+        elif bucket == "medium":
+            self._send_alert_ingestor_alert(
+                node=node,
+                risk_score=score,
+                reasons=reasons,
+                rule_ids=rule_ids,
+                correlated=decision.correlated,
+                severity="MEDIUM",
+            )
+
+        elif bucket == "high":
+            log.warning(f"[HIGH_RISK] node={node} score={score:.2f}")
             self._pause(node)
             self._send_alert_ingestor_alert(
                 node=node,
@@ -81,8 +90,8 @@ class Router:
                 severity="HIGH",
             )
 
-        elif bucket == "quarantine":
-            log.critical(f"[QUARANTINE] node={node} score={score:.2f}")
+        elif bucket == "critical":
+            log.critical(f"[CRITICAL_RISK] node={node} score={score:.2f}")
 
             # ── REC-09: Capture forensic evidence BEFORE stopping the container ──
             self._capture_forensics(

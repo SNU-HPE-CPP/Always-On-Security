@@ -119,6 +119,26 @@ const ATTACKS: AttackDefinition[] = [
     expectedAlerts: ["CONTAINER_EXEC", "RUNTIME_DRIFT", "↑ score multiplier"],
     nodeSpecific: true,
   },
+  {
+    id: "image_mismatch_demo",
+    category: "exec",
+    name: "[DEMO] Image Mismatch",
+    description:
+      "Simulates an attacker tampering with the container image, resulting in a digest mismatch.",
+    severity: "HIGH",
+    expectedAlerts: ["IMAGE_MISMATCH"],
+    nodeSpecific: true,
+  },
+  {
+    id: "multi_signal_demo",
+    category: "correlated",
+    name: "[DEMO] Multi-Signal Chain",
+    description:
+      "Simulates a coordinated attack chain generating multiple critical threats.",
+    severity: "CRITICAL",
+    expectedAlerts: ["CONTAINER_EXEC", "RUNTIME_DRIFT"],
+    nodeSpecific: true,
+  },
 ];
 
 // ── Category config ───────────────────────────────────────────────────────────
@@ -159,11 +179,13 @@ const ATTACK_ICONS: Record<string, ComponentType<{ className?: string }>> = {
   suspicious_restart: RotateCcw,
   runtime_drift_network: Network,
   image_mismatch: Package2,
+  image_mismatch_demo: Package2,
   rogue_node: Ghost,
   replay_attack: Repeat2,
   config_tamper: FileCode2,
   allowlist_tamper: ShieldOff,
   multi_signal: Zap,
+  multi_signal_demo: Zap,
 };
 
 const KNOWN_NODES = ["node1", "node2", "node3", "node4"];
@@ -215,10 +237,13 @@ function SimLogEntry({ entry }: { entry: SimLog }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function AttackSimulator() {
+export default function AttackSimulator() {
   const [activeCategory, setActiveCategory] = useState<AttackCategory>("all");
   const [selectedNodes, setSelectedNodes] = useState<Record<string, string>>(
-    () => Object.fromEntries(KNOWN_NODES.map((_, i) => [ATTACKS[i]?.id ?? "", "node1"])),
+    () =>
+      Object.fromEntries(
+        KNOWN_NODES.map((_, i) => [ATTACKS[i]?.id ?? "", "node1"]),
+      ),
   );
   const [firingIds, setFiringIds] = useState<Set<string>>(new Set());
   const [simLog, setSimLog] = useState<SimLog[]>([]);
@@ -233,7 +258,8 @@ export function AttackSimulator() {
       : KNOWN_NODES;
 
   const getNodeForAttack = useCallback(
-    (attackId: string) => selectedNodes[attackId] ?? availableNodes[0] ?? "node1",
+    (attackId: string) =>
+      selectedNodes[attackId] ?? availableNodes[0] ?? "node1",
     [selectedNodes, availableNodes],
   );
 
@@ -268,11 +294,17 @@ export function AttackSimulator() {
       { attack: attack.id, node },
       {
         onSuccess: (result) => {
-          const msg = result.message ?? (result.ok ? "Attack executed." : result.error ?? "Failed.");
+          const msg =
+            result.message ??
+            (result.ok ? "Attack executed." : (result.error ?? "Failed."));
           setSimLog((prev) =>
             prev.map((e) =>
               e.id === logId
-                ? { ...e, status: result.ok ? "success" : "error", message: msg }
+                ? {
+                    ...e,
+                    status: result.ok ? "success" : "error",
+                    message: msg,
+                  }
                 : e,
             ),
           );
@@ -308,7 +340,7 @@ export function AttackSimulator() {
       : ATTACKS.filter((a) => a.category === activeCategory);
 
   return (
-    <section id="simulate" className="relative space-y-6">
+    <section id="simulate" className="relative space-y-6 p-10">
       {/* ── Header ── */}
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-3">
@@ -359,7 +391,9 @@ export function AttackSimulator() {
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {filtered.map((attack) => {
           const Icon = ATTACK_ICONS[attack.id] ?? Swords;
-          const node = attack.nodeSpecific ? getNodeForAttack(attack.id) : undefined;
+          const node = attack.nodeSpecific
+            ? getNodeForAttack(attack.id)
+            : undefined;
           const key = fireKey(attack.id, node);
           const isFiring = firingIds.has(key);
 
@@ -416,7 +450,9 @@ export function AttackSimulator() {
                   <div className="relative">
                     <select
                       value={getNodeForAttack(attack.id)}
-                      onChange={(e) => setNodeForAttack(attack.id, e.target.value)}
+                      onChange={(e) =>
+                        setNodeForAttack(attack.id, e.target.value)
+                      }
                       className="
                         w-full appearance-none rounded-lg border border-zinc-700 bg-zinc-900
                         px-3 py-1.5 pr-8 text-sm text-zinc-200
@@ -447,10 +483,10 @@ export function AttackSimulator() {
                     isFiring
                       ? "cursor-not-allowed bg-zinc-800 text-zinc-500"
                       : attack.severity === "CRITICAL"
-                      ? "bg-red-600/80 text-white hover:bg-red-600 hover:shadow-lg hover:shadow-red-900/30"
-                      : attack.severity === "HIGH"
-                      ? "bg-orange-600/80 text-white hover:bg-orange-600 hover:shadow-lg hover:shadow-orange-900/30"
-                      : "bg-yellow-600/80 text-white hover:bg-yellow-600 hover:shadow-lg hover:shadow-yellow-900/30"
+                        ? "bg-red-600/80 text-white hover:bg-red-600 hover:shadow-lg hover:shadow-red-900/30"
+                        : attack.severity === "HIGH"
+                          ? "bg-orange-600/80 text-white hover:bg-orange-600 hover:shadow-lg hover:shadow-orange-900/30"
+                          : "bg-yellow-600/80 text-white hover:bg-yellow-600 hover:shadow-lg hover:shadow-yellow-900/30"
                   }
                 `}
               >

@@ -1,0 +1,56 @@
+# Master Configuration for Risk Engine
+
+# ── 1. Allowlist & Core Settings ───────────────────────────────────────
+# Approved node identifiers.
+allowed_nodes:
+  - node1
+  - node2
+  - node3
+  - node4
+  - security-monitor
+  - host-observer
+
+# Message flooding threshold.
+flood_threshold:
+  max_msgs_per_60s: 20
+
+# Replay attack protection window.
+replay_protection:
+  max_age_seconds: 30
+  window_seq_track: 1000
+
+# Per-node heartbeat timeouts (seconds).
+heartbeat_timeout_seconds:
+  default: 30
+  node1: 30
+  node2: 30
+  node3: 30
+  node4: 30
+  security-monitor: 120
+  host-observer: 120
+
+# Cluster network detection defaults used by the node-side network collector.
+network_detection:
+  cluster_cidr: 172.20.0.0/16
+  allowed_remote_ports: [22, 5514, 5555, 5556]
+  allowed_listen_ports: [5556]
+  max_remote_targets: 8
+
+# ── 2. Asset Criticality ────────────────────────────────────────────────
+# Asset criticality weights (0–30).
+node_criticality:
+  node1: 3
+  node2: 3
+  node3: 5
+  node4: 20
+  default: 4
+
+# ── 3. Thresholds & Scoring ─────────────────────────────────────────────
+buckets:
+  info: [0, 20]
+  low: [21, 40]
+  medium: [41, 70]
+  high: [71, 100]
+  # >100 is critical
+
+decay_rate: 5.0

@@ -20,6 +20,7 @@ services:
       IMAGES: 1
       NETWORKS: 1
       POST: 1
+      EXEC: 1
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
@@ -33,7 +34,7 @@ services:
     container_name: controller
     environment:
       - HMAC_SECRET=${HMAC_SECRET}
-      - ALLOWLIST_PATH=/opt/security/config/allowlist.yaml
+      - ALLOWLIST_PATH=/opt/security/config/master_config.yaml
     volumes:
       - shared_data:/data
       - ./risk_engine/config:/opt/security/config:ro
@@ -53,8 +54,9 @@ services:
     cap_add:
       - NET_ADMIN
     environment:
-      - ALLOWLIST_PATH=/opt/security/config/allowlist.yaml
+      - ALLOWLIST_PATH=/opt/security/config/master_config.yaml
       - DOCKER_HOST=tcp://docker-socket-proxy:2375
+      - HMAC_SECRET=${HMAC_SECRET}
     volumes:
       - shared_data:/data
       - ./risk_engine/config:/opt/security/config:ro
@@ -177,7 +179,7 @@ services:
     environment:
       - HMAC_SECRET=${HMAC_SECRET}
       - CONTROLLER_URL=tcp://controller:5555
-      - ALLOWLIST_PATH=/opt/security/config/allowlist.yaml
+      - ALLOWLIST_PATH=/opt/security/config/master_config.yaml
       - DOCKER_HOST=tcp://docker-socket-proxy:2375
     volumes:
       - ./risk_engine/config:/opt/security/config:ro
@@ -283,7 +285,7 @@ networks:
   # Non-internal bridge used exclusively to publish the dashboard port to the host.
   # No other services join this network, so it doesn't widen the attack surface.
   host-access:
-    driver: bridge   
+    driver: bridge
 
 volumes:
   shared_data:

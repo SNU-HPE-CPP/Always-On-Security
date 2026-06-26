@@ -10,7 +10,9 @@ COPY dashboard/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY dashboard/app.py ./app.py
+COPY dashboard/incident_summary.py ./incident_summary.py
 COPY dashboard/templates ./templates
+
 
 RUN chown -R appuser:appgroup /app
 

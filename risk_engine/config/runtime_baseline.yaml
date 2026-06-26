@@ -10,8 +10,8 @@ baseline:
     binds: []
     cap_add: []
     networks:
-      - cpp2_project_compute-net
-      - cpp2_project_mgmt-net
+      - always-on-security_compute-net
+      - always-on-security_mgmt-net
     restart_policy: no:0
     security_opts: []
     user: appuser
@@ -19,8 +19,8 @@ baseline:
     binds: []
     cap_add: []
     networks:
-      - cpp2_project_compute-net
-      - cpp2_project_mgmt-net
+      - always-on-security_compute-net
+      - always-on-security_mgmt-net
     restart_policy: no:0
     security_opts: []
     user: appuser
@@ -28,8 +28,8 @@ baseline:
     binds: []
     cap_add: []
     networks:
-      - cpp2_project_compute-net
-      - cpp2_project_mgmt-net
+      - always-on-security_compute-net
+      - always-on-security_mgmt-net
     restart_policy: no:0
     security_opts: []
     user: appuser
@@ -37,8 +37,8 @@ baseline:
     binds: []
     cap_add: []
     networks:
-      - cpp2_project_mgmt-net
-      - cpp2_project_storage-net
+      - always-on-security_mgmt-net
+      - always-on-security_storage-net
     restart_policy: no:0
     security_opts: []
     user: appuser
