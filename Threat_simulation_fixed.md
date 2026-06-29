@@ -63,24 +63,27 @@ When a node's cumulative risk score enters the **Medium** (`auto`) bucket (score
 
 These playbooks strictly execute in the Infrastructure Zone (host level). **They never execute arbitrary code, modify internal files, or kill processes *inside* a tenant workload container.** This enforces our core architectural principle: workload containers are untrusted and fully opaque.
 
+**Execution Supersedence:** If a container is already paused or quarantined by a primary security policy (e.g. cumulative score reaching Critical/High) before a playbook executes, the engine safely supersedes the playbook and logs a clean `Execution superseded` event instead of crashing with Docker 409 API errors.
+
 Here are the 5 active remediation tracks, their exact trigger mechanisms, and step-by-step actions:
 
-### 1. Kill Unauthorized Process (`RUNTIME_DRIFT`)
-* **Purpose:** To neutralize unauthorized processes that bypass normal container startup (e.g., processes spawned via unexpected `exec` sessions).
-* **Trigger:** The `host-observer` detects new rogue processes or newly added capabilities diverging from the `runtime_baseline.yaml`.
+### 1. Isolate Data Networks (`RUNTIME_DRIFT`)
+* **Purpose:** To neutralize unauthorized container configurations (like unexpected network attachments or security opt changes) that bypass normal container startup.
+* **Trigger:** The `host-observer` detects drift in the container's runtime baseline (e.g., unexpected network connections or capability changes).
 * **Action Details:** 
-  1. The playbook executes `ps aux` strictly on the host.
-  2. It filters the process tree to isolate the exact Process IDs (PIDs) associated with the rogue activity originating from the compromised container.
-  3. It issues a forceful `kill -9 <PID>` to terminate the unauthorized process tree directly from the host namespace.
-* **Impact:** The rogue process is instantly killed without needing an agent inside the container, neutralizing the immediate threat.
+  1. The playbook extracts the exact drifted configuration fields from the alert evidence.
+  2. It leverages the Docker SDK via the `NetworkIsolator` to physically disconnect the compromised container from all data-plane networks (`compute-net` and `storage-net`).
+  3. The management network remains connected solely to allow security teams to safely shell into the isolated environment for forensics.
+* **Impact:** The container is instantly severed from sensitive data networks without relying on unreliable in-container process killing, neutralizing the threat while preserving forensic state.
 
 ### 2. Isolate Rogue Network Segment (`UNEXPECTED_NETWORK_ATTACH`)
 * **Purpose:** To prevent lateral movement and unauthorized exfiltration when a container attempts to join a network it doesn't belong to.
-* **Trigger:** The `security-monitor` detects a workload container maliciously attaching to an unauthorized subnet (e.g., a storage network instead of the compute network).
+* **Trigger:** The `security-monitor` detects a workload container maliciously attaching to an unauthorized subnet.
 * **Action Details:**
-  1. The playbook dynamically targets the rogue IP blocks (e.g., `10.99.0.0/16`).
-  2. It leverages the host's `iptables` to append `DROP` rules for both `INPUT` and `OUTPUT` traffic matching the rogue subnet.
-* **Impact:** The container's access to the unauthorized segment is physically severed at the host networking level. Legitimate traffic on the management cluster net remains unaffected.
+  1. The playbook triggers a dual host-level enforcement action bypassing the container completely.
+  2. First, it uses the Docker SDK to immediately disconnect the container from all data networks.
+  3. Second, it applies an `iptables FORWARD DROP` rule directly on the host machine's bridge network for the container's IP.
+* **Impact:** The container's network access is physically severed. Even if the container attempts to reconnect to the network internally, the host-level firewall rules drop the traffic instantly. Legitimate traffic on the management cluster net remains unaffected.
 
 ### 3. Restore Configuration Baseline (`CONFIG_DRIFT`)
 * **Purpose:** To self-heal the security infrastructure if an attacker attempts to tamper with critical system configuration files.
