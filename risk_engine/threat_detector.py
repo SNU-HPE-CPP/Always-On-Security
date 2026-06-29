@@ -103,7 +103,13 @@ class ThreatDetector:
 
     def run(self, event: dict) -> list:
         if event.get("security_alert"):
-            return []
+            return [ThreatSignal(
+                node_id     = event.get("node", "unknown"),
+                threat_type = event.get("threat_type", "UNKNOWN"),
+                severity    = event.get("severity", "CRITICAL"),
+                description = event.get("description", ""),
+                evidence    = event.get("evidence", {}),
+            )]
 
         node    = event.get("node", "unknown")
         signals = []

@@ -172,12 +172,25 @@ class Router:
             container = client.containers.get(node)
             container.reload()
             if container.status in {"exited", "dead", "removing"}:
-                log.info(f"Node {node} is already stopped; skipping quarantine")
+                log.info(f"Node {node} is already stopped; marking as quarantined")
+                self._store.update_node_status(node=node, status="quarantined", risk_score=0.0)
                 return
             container.stop()
             log.critical(f"Node {node} quarantined (container stopped)")
+            self._store.update_node_status(node=node, status="quarantined", risk_score=0.0)
         except Exception as e:
-            log.error(f"Quarantine failed for {node}: {e}")
+            import requests
+            if isinstance(e, requests.exceptions.HTTPError) and e.response is not None and e.response.status_code == 404:
+                # Container does not exist — phantom/rogue node. Mark as quarantined
+                # in the store so the dashboard shows the correct state and the
+                # controller blacklist prevents further messages from this node.
+                log.critical(
+                    f"[QUARANTINE] Node {node} has no backing container (phantom rogue). "
+                    "Marking as quarantined in store and blocking via controller blacklist."
+                )
+                self._store.update_node_status(node=node, status="quarantined", risk_score=0.0)
+            else:
+                log.error(f"Quarantine failed for {node}: {e}")
 
     # ── REC-09: Forensic capture ──────────────────────────────────────────────
 

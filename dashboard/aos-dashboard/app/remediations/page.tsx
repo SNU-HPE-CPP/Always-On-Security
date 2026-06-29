@@ -1,7 +1,7 @@
 "use client";
 
 import { Card } from "@/components/ui/card";
-import { Terminal, Shield, Zap, Activity, AlertTriangle } from "lucide-react";
+import { Terminal, Shield, Zap, Activity, AlertTriangle, RefreshCw } from "lucide-react";
 import { useState } from "react";
 
 const REMEDIATION_MAPS = [
@@ -71,6 +71,21 @@ echo "Lateral movement mitigated. Node is secure."`,
     color: "text-red-400",
     bg: "bg-red-500/10",
     border: "border-red-500/30"
+  },
+  {
+    threat: "IMAGE_MISMATCH",
+    name: "Verify Container Digest & Restart",
+    description: "Re-pulls the trusted image manifest from the registry and restarts the tampered workload to automatically snap it back to the approved baseline.",
+    script: `#!/bin/sh
+echo "Verifying image digest..."
+echo "Pulling latest approved image manifest..."
+sleep 1
+echo "Restarting application service to apply approved image state..."
+echo "Service restarted."`,
+    icon: RefreshCw,
+    color: "text-emerald-400",
+    bg: "bg-emerald-500/10",
+    border: "border-emerald-500/30"
   }
 ];
 
