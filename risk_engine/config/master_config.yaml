@@ -37,12 +37,12 @@ network_detection:
   max_remote_targets: 8
 
 # ── 2. Asset Criticality ────────────────────────────────────────────────
-# Asset criticality weights (0–30).
+# Asset criticality weights (0–30, but overridden to 10000 for node4 to force quarantine).
 node_criticality:
   node1: 3
   node2: 3
   node3: 5
-  node4: 20
+  node4: 100
   default: 4
 
 # ── 3. Thresholds & Scoring ─────────────────────────────────────────────
