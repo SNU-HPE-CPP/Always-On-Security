@@ -84,7 +84,7 @@ services:
         ipv4_address: 10.10.3.20
       host-access:
     ports:
-      - "5001:5000"
+      - "5000:5000"
 
   aos-frontend:
     build:
@@ -238,7 +238,7 @@ services:
     volumes:
       - shared_data:/var/log/shared
       - ./risk_engine/config:/opt/security/config:ro
-      - /var/log/falco:/var/log/falco:rw
+      - /var/log/falco:/var/log/falco:ro
     networks:
       compute-net:
         ipv4_address: 10.10.1.250
