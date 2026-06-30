@@ -152,9 +152,6 @@ class RemediationEngine:
             self._log_remediation_event(node, action_name, err, success=False)
 
     # ── Generic in-container bash exec (used by playbooks 3, 4, 5) ──────────
-
-    def _exec_in_container(self, alert, action_name: str, script: str):
-        """
     def _exec_in_container(self, alert, action_name: str, script: str):
         """
         Runs the bash script from remediations.yaml inside the target container
