@@ -1,0 +1,46 @@
+name: Container CVE Scan (Trivy)
+
+on:
+  push:
+    branches: [main, abhyudaya]
+  pull_request:
+    branches: [main]
+
+jobs:
+  trivy-scan:
+    name: Trivy — ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: node_agent
+            dockerfile: node_agent/Dockerfile
+          - service: controller
+            dockerfile: controller/Dockerfile
+          - service: dashboard
+            dockerfile: dashboard/Dockerfile
+          - service: security_monitor
+            dockerfile: security_monitor/Dockerfile
+          - service: host_observer
+            dockerfile: host_observer/Dockerfile
+          - service: alert_ingestor
+            dockerfile: alert_ingestor/Dockerfile
+          - service: risk_engine
+            dockerfile: risk_engine/Dockerfile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t scan-target:${{ matrix.service }} -f ${{ matrix.dockerfile }} .
+
+      - name: Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: scan-target:${{ matrix.service }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
