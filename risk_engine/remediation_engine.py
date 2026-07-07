@@ -110,6 +110,20 @@ class RemediationEngine:
             log.error(f"[AUTO-REMEDIATION] {err}")
             self._log_remediation_event(node, action_name, err, success=False)
 
+        # §4.2 Compute Node Sanitization: stop drifted container for recreation
+        # from approved image. Operator restarts: docker compose up <node> --no-deps -d
+        try:
+            import docker as docker_sdk
+            dc = docker_sdk.from_env()
+            container = dc.containers.get(alert.node_id)
+            container.stop(timeout=10)
+            log.warning(
+                f"[SANITIZE] Stopped drifted container {alert.node_id} "
+                f"for recreation from approved image (§4.2)"
+            )
+        except Exception as exc:
+            log.error(f"[SANITIZE] Failed to stop {alert.node_id}: {exc}")
+
     # ── Fix #2: UNEXPECTED_NETWORK_ATTACH handler ────────────────────────────
 
     def _handle_network_attach(self, alert, action_name: str):

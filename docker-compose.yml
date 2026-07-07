@@ -72,6 +72,9 @@ services:
       context: .
       dockerfile: dashboard/Dockerfile
     container_name: dashboard
+    environment:
+      - SECRET_KEY=${DASHBOARD_SECRET_KEY:-change-me-in-prod-32chars}
+      - LOGIN_PASSWORD=${DASHBOARD_LOGIN_PASSWORD:-}
     volumes:
       - shared_data:/data:ro
     depends_on:

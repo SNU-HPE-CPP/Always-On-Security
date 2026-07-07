@@ -205,6 +205,23 @@ class AlertManager:
         except Exception as e:
             log.error(f"Failed to persist alert {alert.alert_id}: {e}")
 
+        # §5.7 Forensic snapshot: preserve evidence for CRITICAL alerts
+        if severity == "CRITICAL":
+            try:
+                self._store.write_forensic_snapshot(
+                    node=alert.node_id,
+                    trigger=alert.threat_type,
+                    risk_score=0.0,
+                    processes=[],
+                    network_conns=[],
+                    container_state=alert.evidence or {},
+                    recent_alerts=[],
+                    recent_events=[],
+                    artifact_path=None,
+                )
+            except Exception as e:
+                log.error(f"Failed to write forensic snapshot for {alert.alert_id}: {e}")
+
         # Trigger auto-remediation playbooks
         self.remediation_engine.process_alert(alert)
 

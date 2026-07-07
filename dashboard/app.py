@@ -1,18 +1,86 @@
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, session, redirect, url_for
 import sqlite3
 import json
 import zmq
 import re
 import sys
 import os
+from functools import wraps
 
 # Make incident_summary importable from the same directory
 sys.path.insert(0, os.path.dirname(__file__))
 from incident_summary import build_incident_summary
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "change-me-in-prod-32chars")
+
+LOGIN_PASSWORD = os.environ.get("LOGIN_PASSWORD", "")
 
 DATABASE = "/data/events.db"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Auth helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def login_required(f):
+    """Decorator: redirects to /login when LOGIN_PASSWORD is set and user has no session."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not LOGIN_PASSWORD:          # dev mode — no password set, all routes open
+            return f(*args, **kwargs)
+        if not session.get("logged_in"):
+            if request.path.startswith("/api/"):
+                return jsonify({"error": "Unauthorized"}), 401
+            return redirect(url_for("login"))
+        return f(*args, **kwargs)
+    return decorated
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Unauthenticated routes: /health, /login, /logout
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@app.route("/health")
+def health():
+    """Liveness probe — always returns 200, no auth required."""
+    return jsonify({"status": "ok"})
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    """Session login page. Redirects to / on success."""
+    # If auth is disabled, nothing to do
+    if not LOGIN_PASSWORD:
+        return redirect(url_for("index"))
+    error = None
+    if request.method == "POST":
+        if request.form.get("password") == LOGIN_PASSWORD:
+            session["logged_in"] = True
+            return redirect(url_for("index"))
+        error = "Invalid password."
+    return f"""<!DOCTYPE html>
+<html><head><title>Login — Always-On Security</title>
+<style>body{{font-family:monospace;background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}}
+form{{background:#161b22;padding:2rem;border:1px solid #30363d;border-radius:8px;min-width:280px}}
+h2{{margin-top:0}}input[type=password]{{width:100%;padding:.5rem;background:#0d1117;border:1px solid #30363d;color:#c9d1d9;border-radius:4px;box-sizing:border-box}}
+button{{margin-top:1rem;width:100%;padding:.5rem;background:#238636;border:none;color:#fff;border-radius:4px;cursor:pointer}}
+.err{{color:#f85149;margin-top:.5rem}}</style></head>
+<body><form method="POST">
+<h2>Always-On Security</h2>
+<input type="password" name="password" placeholder="Password" autofocus required>
+{"<p class='err'>" + error + "</p>" if error else ""}
+<button type="submit">Sign in</button>
+</form></body></html>"""
+
+
+@app.route("/logout")
+def logout():
+    """Clear session and redirect to login page."""
+    session.clear()
+    return redirect(url_for("login"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -63,6 +131,7 @@ def _table_exists(conn, table: str) -> bool:
 
 
 @app.route("/")
+@login_required
 def index():
     conn = get_db()
     try:
@@ -118,6 +187,7 @@ def index():
 
 
 @app.route("/api/nodes")
+@login_required
 def api_nodes():
     conn = get_db()
     try:
@@ -130,6 +200,7 @@ def api_nodes():
 
 
 @app.route("/api/nodes/identity")
+@login_required
 def api_node_identity():
     """Per-node identity records: machine_id, trust status, first/last seen."""
     conn = get_db()
@@ -143,6 +214,7 @@ def api_node_identity():
 
 
 @app.route("/api/nodes/security")
+@login_required
 def api_node_security():
     """Per-node security summary: replay count, flood count, heartbeat, integrity."""
     conn = get_db()
@@ -193,6 +265,7 @@ def api_node_security():
 # API: Security Alerts
 # ─────────────────────────────────────────────────────────────────────────────
 @app.route("/api/alerts")
+@login_required
 def api_alerts():
     """
     Paginated security alerts.
@@ -276,6 +349,7 @@ def api_alerts():
 
 
 @app.route("/api/events")
+@login_required
 def api_events():
     """Live telemetry events feed."""
     conn = get_db()
@@ -304,6 +378,7 @@ def api_events():
 
 
 @app.route("/api/alerts/stats")
+@login_required
 def api_alert_stats():
     """Aggregate threat statistics for dashboard charts."""
     conn = get_db()
@@ -377,6 +452,7 @@ def _send_cmd(payload):
 
 
 @app.route("/api/nodes/<node>/approve", methods=["POST"])
+@login_required
 def approve_node(node):
     if not re.match(r"^[a-zA-Z0-9_-]{1,32}$", node):
         return jsonify({"ok": False, "error": "Invalid node name"}), 400
@@ -384,6 +460,7 @@ def approve_node(node):
 
 
 @app.route("/api/nodes/<node>/restart", methods=["POST"])
+@login_required
 def restart_node(node):
     if not re.match(r"^[a-zA-Z0-9_-]{1,32}$", node):
         return jsonify({"ok": False, "error": "Invalid node name"}), 400
@@ -391,6 +468,7 @@ def restart_node(node):
 
 
 @app.route("/api/reset", methods=["POST"])
+@login_required
 def reset_system():
     return _send_cmd({"action": "reset"})
 
@@ -427,6 +505,7 @@ _NODE_SPECIFIC_ATTACKS = {
 
 
 @app.route("/api/simulate", methods=["POST"])
+@login_required
 def simulate_attack():
     body = request.get_json(silent=True) or {}
 
@@ -450,6 +529,7 @@ def simulate_attack():
 
 
 @app.route("/api/nodes/<node>/details", methods=["GET"])
+@login_required
 def get_node_details(node):
     if not re.match(r"^[a-zA-Z0-9_-]{1,32}$", node):
         return jsonify({"error": "Invalid node name"}), 400
@@ -492,6 +572,7 @@ def get_node_details(node):
 
 
 @app.route("/api/nodes/<node>/deny", methods=["POST"])
+@login_required
 def deny_node(node):
     """
     Admin-initiated quarantine from the Human Review panel.
@@ -511,6 +592,7 @@ def deny_node(node):
 
 
 @app.route("/api/review/queue")
+@login_required
 def api_review_queue():
     """
     Return all nodes currently in 'awaiting_approval' status
@@ -567,6 +649,7 @@ def api_review_queue():
 
 
 @app.route("/api/incident-summary/<node>")
+@login_required
 def api_incident_summary(node):
     """
     Return a full, structured incident summary for the Human Review panel.

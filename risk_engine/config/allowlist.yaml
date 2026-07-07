@@ -1,0 +1,20 @@
+# Allowlist of authorised cluster nodes.
+# Tamper with this file (add/remove entries) to trigger ALLOWLIST_TAMPER via host_observer.
+
+allowed_nodes:
+  - node1
+  - node2
+  - node3
+  - node4
+  - controller
+  - risk-engine
+  - dashboard
+  - alert-ingestor
+  - host-observer
+  - security-monitor
+  - docker-socket-proxy
+
+replay_protection:
+  enabled: true
+  max_age_seconds: 30
+  max_sequence_delta: 1000
