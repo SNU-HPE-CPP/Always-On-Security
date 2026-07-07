@@ -32,7 +32,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build image
-        run: docker build -t scan-target:${{ matrix.service }} -f ${{ matrix.dockerfile }} .
+        run: docker build -t scan-target:${{ matrix.service }} -f ${{ matrix.dockerfile }} ${{ matrix.service }}
       - name: Trivy vulnerability scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:
