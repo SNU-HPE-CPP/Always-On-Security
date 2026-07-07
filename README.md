@@ -23,12 +23,13 @@ A containerised, multi-layer security monitoring and enforcement platform for HP
 7. [Multi-Signal Correlation](#7-multi-signal-correlation)
 8. [Fast-Path Policy Engine](#8-fast-path-policy-engine)
 9. [Auto-Remediation Playbooks](#9-auto-remediation-playbooks)
-10. [Attack Simulator](#10-attack-simulator)
-11. [Configuration Files](#11-configuration-files)
-12. [Database Schema](#12-database-schema)
-13. [Build-Time Security Pipeline](#13-build-time-security-pipeline)
-14. [Deployment](#14-deployment)
-15. [Environment Variables](#15-environment-variables)
+10. [Human-in-the-Loop Approval](#10-human-in-the-loop-approval)
+11. [Attack Simulator](#11-attack-simulator)
+12. [Configuration Files](#12-configuration-files)
+13. [Database Schema](#13-database-schema)
+14. [Build-Time Security Pipeline](#14-build-time-security-pipeline)
+15. [Deployment](#15-deployment)
+16. [Environment Variables](#16-environment-variables)
 
 ---
 
@@ -534,7 +535,39 @@ The system automatically triggers bash-based remediation scripts when a node's c
 
 ---
 
-## 10. Attack Simulator
+## 10. Human-in-the-Loop Approval Workflow
+
+When a node's cumulative risk score enters the **High** (`human`) bucket (score 71–100) or an admin manually queues a node, a structured Human-in-the-Loop Approval Workflow is engaged to verify the threat before final enforcement actions are committed.
+
+### 1. Automated Freeze and Queueing
+* The Risk Engine's Router intercepts the event and immediately executes `NetworkIsolator.pause_node()`.
+* The container state is frozen via the Docker SDK to prevent further exploitation while preserving memory and execution state for analysis.
+* The node status in the SQLite database (`node_status` table) is updated to `awaiting_approval`.
+* A high-severity UDP syslog alert is emitted to the alert ingestor.
+
+### 2. SOC Analyst Review (Dashboard UI)
+* The frozen node appears in the **Human Review Queue** on the Next.js Dashboard.
+* Analysts can examine the chronological event history timeline, correlated multi-signals, resource usage, and associated security alert metadata.
+
+### 3. Review Decisions and Post-Actions
+Through the dashboard, the SOC analyst must issue a manual review decision (`approve` or `deny`), which is transmitted via the ZMQ command server (`cmd_server.py`):
+
+* **Approve (Release Node):**
+  1. The ZMQ command server calls the Docker SDK to unpause the container (`container.unpause()`).
+  2. Any host-level `iptables` FORWARD DROP rules applied to the node's IPs are deleted.
+  3. The node's cumulative risk score is reset to `0.0`.
+  4. The node's operational status is returned to `idle`.
+  5. The decision, analyst notes, and timestamp are permanently written to the `node_status` metadata fields (recorded via `write_review_decision()`).
+
+* **Deny (Quarantine / Destroy Node):**
+  1. A forensic capture (`_capture_forensics()`) is automatically triggered to capture active processes, network connections, and system state for post-incident audit.
+  2. The ZMQ command server calls the Docker SDK to stop and destroy the container.
+  3. Host-level `iptables` quarantine rules are confirmed to block all future traffic.
+  4. The decision, analyst notes, and timestamp are permanently written to the `node_status` metadata fields (recorded via `write_review_decision()`) as a permanent audit trail.
+
+---
+
+## 11. Attack Simulator
 
 `risk_engine/simulator.py` is callable from the Next.js dashboard via the ZMQ command server (`cmd_server.py`). All 11 attack types are available:
 
@@ -554,7 +587,7 @@ The system automatically triggers bash-based remediation scripts when a node's c
 
 ---
 
-## 11. Configuration Files
+## 12. Configuration Files
 
 All config files are in `risk_engine/config/` and mounted read-only into the controller, risk engine, host observer, and security monitor.
 
@@ -578,7 +611,7 @@ Maps container names to their expected runtime state: `user`, `cap_add`, `cap_dr
 
 ---
 
-## 12. Database Schema
+## 13. Database Schema
 
 All tables live in `/data/events.db` (SQLite, WAL mode). The `Store` class in `risk_engine/store.py` owns schema creation and migrations. The shared data volume is mounted read-only into the dashboard.
 
@@ -598,7 +631,7 @@ All tables live in `/data/events.db` (SQLite, WAL mode). The `Store` class in `r
 
 ---
 
-## 13. Build-Time Security Pipeline
+## 14. Build-Time Security Pipeline
 
 Two GitHub Actions workflows run on every push and pull request to `main`.
 
@@ -644,7 +677,7 @@ Writes machine-readable JSON audit records to `/data/integrity_audits/`.
 
 ---
 
-## 14. Deployment
+## 15. Deployment
 
 ### Prerequisites
 
@@ -710,7 +743,7 @@ docker compose down -v        # stop and remove shared_data volume
 
 ---
 
-## 15. Environment Variables
+## 16. Environment Variables
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
