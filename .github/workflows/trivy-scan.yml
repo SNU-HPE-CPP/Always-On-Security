@@ -10,6 +10,7 @@ jobs:
   trivy-scan:
     name: Trivy — ${{ matrix.service }}
     runs-on: ubuntu-latest
+
     strategy:
       fail-fast: false
       matrix:
@@ -31,8 +32,26 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
       - name: Build image
-        run: docker build -t scan-target:${{ matrix.service }} -f ${{ matrix.dockerfile }} ${{ matrix.service }}
+        shell: bash
+        run: |
+          SERVICE="${{ matrix.service }}"
+
+          if [ "$SERVICE" = "node_agent" ]; then
+            echo "Building node_agent with node_agent/ context"
+            docker build \
+              -t scan-target:$SERVICE \
+              -f node_agent/Dockerfile \
+              node_agent
+          else
+            echo "Building $SERVICE with repository root context"
+            docker build \
+              -t scan-target:$SERVICE \
+              -f ${{ matrix.dockerfile }} \
+              .
+          fi
+
       - name: Trivy vulnerability scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:
