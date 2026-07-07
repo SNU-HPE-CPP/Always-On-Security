@@ -1,0 +1,12 @@
+vulnerabilities:
+  - id: CVE-2026-23949
+    statement: >
+      Vendored dependency inside setuptools inherited from the upstream
+      Python base image. Application does not use jaraco.context directly.
+    expired_at: 2026-10-01
+
+  - id: CVE-2026-24049
+    statement: >
+      Vendored wheel package inside setuptools inherited from the upstream
+      Python base image. Application does not use the affected vendored code.
+    expired_at: 2026-10-01

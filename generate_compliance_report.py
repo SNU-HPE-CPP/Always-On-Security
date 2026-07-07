@@ -25,6 +25,7 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+import shlex
 
 PROJECT_DIR = Path(__file__).parent
 DEFAULT_OUTPUT = PROJECT_DIR / "compliance_report.txt"
@@ -52,8 +53,18 @@ BENCH_CONTROL_MAP = {
 # Shell helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def sh(cmd, check=False, timeout=120):
-    r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+def sh(cmd, timeout=120):
+    if isinstance(cmd, str):
+        cmd = shlex.split(cmd)
+
+    r = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+
     return r.stdout.strip(), r.returncode
 
 
