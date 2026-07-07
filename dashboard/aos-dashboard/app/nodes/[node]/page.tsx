@@ -96,7 +96,7 @@ export default function NodeDetailsPage({
         </div>
 
         {/* CURRENT SECURITY STATE */}
-        <div className="grid gap-6 md:grid-cols-4">
+        <div className="grid gap-6 md:grid-cols-3">
           <Card className="border-zinc-800 bg-zinc-900 p-6">
             <div className="text-sm text-zinc-500">Current Risk Score</div>
 
@@ -118,14 +118,6 @@ export default function NodeDetailsPage({
 
             <div className="mt-2 text-3xl font-bold text-amber-400">
               {identity?.trust_status ?? "Unknown"}
-            </div>
-          </Card>
-
-          <Card className="border-zinc-800 bg-zinc-900 p-6">
-            <div className="text-sm text-zinc-500">Silent Events</div>
-
-            <div className="mt-2 text-4xl font-bold text-orange-400">
-              {security?.silent_count ?? 0}
             </div>
           </Card>
         </div>
@@ -237,13 +229,13 @@ export default function NodeDetailsPage({
             </div>
           )}
 
-          <div className="grid gap-6 xl:grid-cols-2">
+          <div className="grid gap-6 xl:grid-cols-1">
             <RiskTrend data={history ?? []} />
-            <RulesCard rules={rules} />
           </div>
 
           <div className="mt-6 grid gap-6 xl:grid-cols-2">
             <ReasonsCard reasons={reasons} />
+            <RulesCard rules={rules} />
           </div>
 
           <div className="mt-6">
