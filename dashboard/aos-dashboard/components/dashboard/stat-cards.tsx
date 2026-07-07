@@ -2,17 +2,17 @@
 
 import CountUp from "react-countup";
 
-import { ShieldAlert, AlertTriangle, Clock3, Shield } from "lucide-react";
+import { ShieldAlert, AlertTriangle, Clock3, CircleAlert } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
 import { useStats } from "@/hooks/useDashboard";
 
 export function StatCards() {
   const { data } = useStats();
-  console.log(data)
+  console.log(data);
   const critical =
     (data?.by_severity?.CRITICAL ?? 0) + (data?.by_severity?.HIGH ?? 0);
-
+  const medium = (data?.by_severity?.MEDIUM ?? 0) + (data?.by_severity?.LOW ?? 0);
   const cards = [
     {
       title: "Total Alerts",
@@ -27,16 +27,16 @@ export function StatCards() {
       color: "text-orange-500",
     },
     {
+      title: "Medium / Low",
+      value: medium,
+      icon: CircleAlert,
+      color: "text-cyan-500",
+    },
+    {
       title: "Last 24 Hours",
       value: data?.recent_24h ?? 0,
       icon: Clock3,
       color: "text-purple-500",
-    },
-    {
-      title: "Replay Attempts",
-      value: data?.by_type.REPLAY_ATTACK ?? 0,
-      icon: Shield,
-      color: "text-cyan-500",
     },
   ];
 
